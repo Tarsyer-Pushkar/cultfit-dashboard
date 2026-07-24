@@ -1,0 +1,1052 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tarsyer Store Manager — Cultfit</title>
+  <link rel="icon" type="image/png" href="/tarsyer_icon.png" />
+  <meta name="theme-color" content="#dc2626" />
+  <link rel="manifest" href="/manifest.json" />
+  <link rel="apple-touch-icon" href="/tarsyer_icon.png" />
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.0/css/all.min.css"/>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --primary: #dc2626;
+      --primary-dark: #b91c1c;
+      --primary-light: #fef2f2;
+      --primary-glow: rgba(220,38,38,.15);
+      --accent: #0ea5e9;
+      --success: #10b981;
+      --danger: #ef4444;
+      --neutral: #6b7280;
+      --bg: #f0f4f8;
+      --card: #ffffff;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --text-muted: #64748b;
+      --radius: 12px;
+      --shadow-sm: 0 1px 3px rgba(0,0,0,.07), 0 1px 2px rgba(0,0,0,.05);
+      --shadow-md: 0 4px 16px rgba(0,0,0,.10);
+      --shadow-lg: 0 8px 30px rgba(0,0,0,.13);
+    }
+
+    @keyframes fadeSlideIn { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: translateY(0); } }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes scaleIn { from { opacity: 0; transform: scale(.96); } to { opacity: 1; transform: scale(1); } }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    body { font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; background: var(--bg); color: var(--text); font-size: 14px; }
+    button { cursor: pointer; }
+
+    /* ── Login ── */
+    #login-screen {
+      position: fixed; inset: 0;
+      background: linear-gradient(135deg, #6b0f0f 0%, #b91c1c 55%, #dc2626 100%);
+      display: flex; align-items: center; justify-content: center;
+      z-index: 9999; font-family: 'Inter', sans-serif;
+    }
+    #login-screen.hidden { display: none; }
+
+    .login-card {
+      display: flex; width: 1060px; max-width: 97vw; min-height: 540px;
+      border-radius: 22px; overflow: hidden; box-shadow: 0 32px 100px rgba(0,0,0,.55);
+    }
+
+    .login-left {
+      flex: 1;
+      background: linear-gradient(155deg, #7f1d1d 0%, #b91c1c 55%, #dc2626 100%);
+      padding: 48px 52px; display: flex; flex-direction: column; color: #fff;
+      position: relative; overflow: hidden; justify-content: center;
+    }
+    .ll-tarsyer-row {
+      background: #fff; border-radius: 16px; padding: 14px 28px;
+      display: inline-flex; align-items: center; justify-content: center; gap: 14px;
+      box-shadow: 0 4px 20px rgba(0,0,0,.18); align-self: flex-start; margin-bottom: 44px;
+    }
+    .ll-tarsyer-logo { height: 36px; width: auto; object-fit: contain; }
+    .ll-brand-text { font-size: 18px; font-weight: 700; letter-spacing: .3px; color: #1e293b; }
+    .ll-label { font-size: 11px; font-weight: 600; letter-spacing: 2.5px; text-transform: uppercase; color: rgba(255,255,255,.65); margin-bottom: 14px; }
+    .ll-headline { font-size: 32px; font-weight: 800; line-height: 1.2; letter-spacing: -.5px; margin-bottom: 16px; }
+    .ll-sub { font-size: 13.5px; color: rgba(255,255,255,.72); line-height: 1.7; margin-bottom: 32px; }
+    .ll-pills { display: flex; flex-direction: row; flex-wrap: wrap; gap: 10px; margin-bottom: auto; }
+    .ll-pill {
+      display: flex; align-items: center; gap: 7px; font-size: 12px; color: rgba(255,255,255,.95); font-weight: 600;
+      background: rgba(0,0,0,.22); border: 1.5px solid rgba(255,255,255,.18); border-radius: 30px; padding: 7px 14px;
+      white-space: nowrap; letter-spacing: .2px; box-shadow: 0 0 14px rgba(0,0,0,.2), inset 0 1px 0 rgba(255,255,255,.1);
+    }
+    .ll-pill:nth-child(1) { box-shadow: 0 0 16px rgba(239,68,68,.45), inset 0 1px 0 rgba(255,255,255,.1); }
+    .ll-pill:nth-child(2) { box-shadow: 0 0 16px rgba(34,197,94,.4),  inset 0 1px 0 rgba(255,255,255,.1); }
+    .ll-pill:nth-child(3) { box-shadow: 0 0 16px rgba(59,130,246,.4), inset 0 1px 0 rgba(255,255,255,.1); }
+    .ll-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .ll-contact { margin-top: 40px; display: flex; flex-direction: column; gap: 8px; }
+    .ll-contact a { display: flex; align-items: center; gap: 8px; font-size: 12px; color: rgba(255,255,255,.6); text-decoration: none; }
+    .ll-contact-icon { width: 28px; height: 28px; border: 1px solid rgba(255,255,255,.2); border-radius: 7px; display: flex; align-items: center; justify-content: center; font-size: 13px; }
+
+    .login-right { width: 420px; flex-shrink: 0; background: #ffffff; padding: 44px 40px; display: flex; flex-direction: column; align-items: stretch; }
+    .lr-logo-wrap { display: flex; justify-content: center; margin-bottom: 28px; }
+    .lr-client-logo { height: 64px; max-width: 220px; object-fit: contain; }
+    .lr-welcome { font-size: 11px; font-weight: 600; letter-spacing: 2px; text-transform: uppercase; color: var(--text-muted); margin-bottom: 4px; }
+    .lr-title { font-size: 28px; font-weight: 800; color: var(--text); letter-spacing: -.5px; margin-bottom: 4px; }
+    .lr-subtitle { font-size: 13px; color: var(--text-muted); margin-bottom: 24px; }
+
+    .login-field-label { font-size: 11px; font-weight: 700; color: #6b7280; text-transform: uppercase; letter-spacing: 1.2px; display: block; margin-bottom: 8px; }
+    .login-input-wrap { position: relative; margin-bottom: 20px; }
+    .login-input-wrap input {
+      width: 100%; padding: 13px 16px; border: 1.5px solid #e5e3df; border-radius: 12px; font-size: 14px; outline: none;
+      transition: border .2s, box-shadow .2s, background .2s; background: #fff; font-family: inherit; color: var(--text);
+      box-shadow: 0 1px 3px rgba(0,0,0,.04);
+    }
+    .login-input-wrap input::placeholder { color: #b0b4bb; }
+    .login-input-wrap input:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(220,38,38,.08); }
+
+    .login-btn {
+      width: 100%; padding: 14px; background: var(--primary); color: #fff; border: none; border-radius: 12px;
+      font-size: 15px; font-weight: 700; letter-spacing: .3px; transition: background .2s, transform .1s, box-shadow .2s;
+      margin-top: 4px; font-family: inherit;
+    }
+    .login-btn:hover { background: #b91c1c; box-shadow: 0 6px 20px rgba(220,38,38,.35); }
+    .login-btn:active { transform: scale(.98); }
+    .login-error { color: var(--danger); font-size: 13px; margin-top: 10px; text-align: center; min-height: 20px; }
+
+    .lr-tarsyer-row { display: none; }
+    @media (max-width: 1023px) {
+      .lr-tarsyer-row { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 18px; padding-bottom: 18px; border-bottom: 1px solid #f1f5f9; }
+      .lr-tarsyer-logo { height: 42px; width: auto; object-fit: contain; }
+      #login-screen { padding: 20px 16px; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+      .login-card { flex-direction: column; width: 100%; max-width: 430px; min-height: 0; border-radius: 18px; margin: auto; }
+      .login-left { display: none; }
+      .login-right { width: 100%; padding: 34px 26px 28px; }
+      .lr-client-logo { height: 54px; }
+      .lr-logo-wrap { margin-bottom: 22px; }
+      .lr-title { font-size: 24px; }
+      .lr-subtitle { margin-bottom: 20px; }
+      .login-input-wrap input { font-size: 16px; }
+    }
+
+    /* ── App Shell ── */
+    #app { display: none; height: 100vh; flex-direction: column; overflow: hidden; }
+    #app.visible { display: flex; }
+
+    .topbar { height: 52px; background: #fff; border-bottom: 1px solid var(--border); display: flex; align-items: stretch; flex-shrink: 0; z-index: 100; box-shadow: var(--shadow-sm); }
+    .topbar-brand {
+      background: linear-gradient(120deg, #7f1d1d 0%, #b91c1c 45%, #dc2626 100%);
+      display: flex; align-items: center; padding: 0 36px 0 18px; gap: 9px; flex-shrink: 0;
+      clip-path: polygon(0 0, calc(100% - 14px) 0, 100% 100%, 0 100%);
+    }
+    .topbar-brand img { height: 32px; max-width: 110px; object-fit: contain; border-radius: 4px; }
+    .topbar-brand span { color: #fff; font-weight: 700; font-size: 14px; letter-spacing: -.2px; white-space: nowrap; }
+    .topbar-center { flex: 1; display: flex; align-items: center; padding: 0 18px; gap: 12px; }
+    .topbar-title { font-size: 15px; font-weight: 700; color: var(--text); letter-spacing: -.2px; }
+    .topbar-right { display: flex; align-items: center; gap: 12px; padding: 0 20px; }
+    .topbar-user-chip { display: flex; align-items: center; gap: 8px; background: #f8fafc; border: 1px solid var(--border); border-radius: 30px; padding: 5px 14px 5px 8px; }
+    .topbar-user-avatar { width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(135deg, #b91c1c, #dc2626); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #fff; flex-shrink: 0; }
+    .topbar-user { font-size: 12px; color: var(--text); font-weight: 600; letter-spacing: -.1px; }
+    .logout-btn { display: flex; align-items: center; gap: 5px; padding: 6px 14px; background: #fff; color: #64748b; border: 1px solid var(--border); border-radius: 30px; font-size: 12px; font-weight: 600; transition: background .18s, color .18s, border-color .18s; letter-spacing: .1px; }
+    .logout-btn:hover { background: #fef2f2; color: var(--primary); border-color: #fecaca; }
+
+    .app-body { flex: 1; display: flex; overflow: hidden; }
+
+    .sidebar {
+      width: 230px; background: #fff; border-right: 1px solid var(--border); display: flex; flex-direction: column;
+      flex-shrink: 0; padding: 12px 0 10px; overflow-y: auto; overflow-x: hidden;
+      scrollbar-width: thin; scrollbar-color: #e2e8f0 transparent; position: relative;
+      transition: width .28s cubic-bezier(.4,0,.2,1);
+    }
+    .sidebar.collapsed { width: 65px; border-right: none; border-radius: 0 20px 20px 0; box-shadow: 3px 0 16px rgba(0,0,0,.08); }
+    .sidebar-section { white-space: nowrap; transition: opacity .2s; }
+    .sidebar.collapsed .sidebar-section { opacity: 0; pointer-events: none; }
+    .nav-label { white-space: nowrap; transition: opacity .2s; }
+    .sidebar.collapsed .nav-item .nav-label { opacity: 0; pointer-events: none; }
+    .sidebar.collapsed .nav-item::before { display: none; }
+    .sidebar.collapsed .nav-item { margin: 3px 8px; padding: 10px; border-radius: 12px; overflow: hidden; }
+    .sidebar.collapsed .nav-item.active, .sidebar.collapsed .nav-item:hover { background: transparent; box-shadow: none; }
+    .sidebar.collapsed .nav-item .icon { width: 30px; height: 30px; font-size: 15px; border-radius: 10px; margin-left: -3px; }
+    .sidebar.collapsed .nav-item.active .icon { background: var(--primary); color: #fff; box-shadow: 0 4px 12px rgba(220,38,38,.35); }
+    .sidebar.collapsed .nav-item:hover .icon { background: #fef2f2; transform: scale(1.1); }
+    .sidebar.collapsed .nav-item::after {
+      content: attr(data-label); position: absolute; left: calc(100% + 10px); top: 50%; transform: translateY(-50%);
+      background: #1e293b; color: #fff; font-size: 12px; font-weight: 500; padding: 5px 10px; border-radius: 7px;
+      white-space: nowrap; opacity: 0; transition: opacity .18s; z-index: 200; pointer-events: none;
+    }
+    .sidebar.collapsed .nav-item:hover::after { opacity: 1; }
+    .sidebar-toggle {
+      position: absolute; right: -13px; top: 20px; width: 26px; height: 26px; background: #fff;
+      border: 1.5px solid var(--border); border-radius: 50%; cursor: pointer; z-index: 50;
+      display: flex; align-items: center; justify-content: center; font-size: 11px; color: #64748b;
+      box-shadow: 0 2px 8px rgba(0,0,0,.1); transition: background .18s, color .18s, border-color .18s;
+    }
+    .sidebar-toggle:hover { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .sidebar::-webkit-scrollbar { width: 4px; }
+    .sidebar::-webkit-scrollbar-track { background: transparent; }
+    .sidebar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 4px; }
+    .sidebar::-webkit-scrollbar-thumb:hover { background: #cbd5e1; }
+
+    .sidebar-section { display: flex; align-items: center; gap: 8px; padding: 14px 16px 5px; font-size: 10px; font-weight: 700; color: #94a3b8; text-transform: uppercase; letter-spacing: 1.2px; margin-top: 4px; }
+    .sidebar-section::after { content: ''; flex: 1; height: 1px; background: #f1f5f9; }
+
+    .nav-item {
+      display: flex; align-items: center; gap: 10px; padding: 9px 12px; margin: 2px 8px; border-radius: 10px;
+      color: #64748b; font-size: 13px; font-weight: 500; cursor: pointer;
+      transition: background .18s, color .18s, transform .14s, box-shadow .18s;
+      border: none; background: none; width: calc(100% - 16px); text-align: left; position: relative; line-height: 1.3;
+    }
+    .nav-item::before {
+      content: ''; position: absolute; left: 0; top: 50%; transform: translateY(-50%) scaleY(0);
+      width: 3px; height: 55%; background: var(--primary); border-radius: 0 3px 3px 0;
+      transition: transform .2s cubic-bezier(.4,0,.2,1);
+    }
+    .nav-item:hover { background: #f8fafc; color: #0f172a; transform: translateX(3px); }
+    .nav-item.active { background: linear-gradient(135deg, #fff1f1 0%, #fff5f5 100%); color: var(--primary); font-weight: 600; box-shadow: inset 0 0 0 1px rgba(220,38,38,.13), 0 2px 8px rgba(220,38,38,.07); }
+    .nav-item.active::before { transform: translateY(-50%) scaleY(1); }
+    .nav-item .icon { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background .18s, transform .18s, box-shadow .18s; background: #f1f5f9; border-radius: 8px; color: #64748b; }
+    .nav-item.active .icon { background: linear-gradient(135deg,#fee2e2,#fecaca); color: var(--primary); box-shadow: 0 2px 8px rgba(220,38,38,.18); }
+    .nav-item:hover:not(.active) .icon { background: #e2e8f0; color: #0f172a; transform: scale(1.08); }
+
+    .content { flex: 1; overflow-y: auto; padding: 20px 24px; scroll-behavior: smooth; }
+    .view-enter { animation: fadeSlideIn .28s cubic-bezier(.4,0,.2,1) both; }
+
+    .filters-bar { background: #fff; border-radius: var(--radius); padding: 11px 16px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; box-shadow: var(--shadow-sm); border: 1px solid var(--border); }
+    .filters-bar label { font-size: 11.5px; font-weight: 600; color: var(--text-muted); }
+    .filters-bar input[type=date], .filters-bar select { padding: 6px 10px; border: 1.5px solid var(--border); border-radius: 7px; font-size: 12.5px; outline: none; transition: border .18s, box-shadow .18s; background: #f8fafc; font-family: inherit; }
+
+    .store-search-wrap { position: relative; }
+    .store-search-trigger { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border: 1.5px solid var(--border); border-radius: 7px; font-size: 12.5px; background: #f8fafc; cursor: pointer; min-width: 130px; user-select: none; transition: border .18s; }
+    .store-search-trigger:hover { border-color: var(--primary); }
+    .store-search-dropdown { display: none; position: absolute; top: calc(100% + 4px); left: 0; min-width: 220px; background: #fff; border: 1.5px solid var(--border); border-radius: 10px; box-shadow: 0 8px 30px rgba(0,0,0,.12); z-index: 500; overflow: hidden; }
+    .store-search-dropdown.open { display: block; }
+    .store-search-input { width: 100%; padding: 9px 12px; border: none; border-bottom: 1px solid var(--border); font-size: 12.5px; outline: none; font-family: inherit; background: #f8fafc; }
+    .store-search-list { max-height: 220px; overflow-y: auto; scrollbar-width: thin; }
+    .store-search-item { padding: 8px 12px; font-size: 12.5px; cursor: pointer; transition: background .14s; }
+    .store-search-item:hover { background: #fef2f2; color: var(--primary); }
+    .store-search-item.selected { background: var(--primary); color: #fff; font-weight: 600; }
+    .filters-bar input[type=date]:focus, .filters-bar select:focus { border-color: var(--primary); box-shadow: 0 0 0 3px rgba(220,38,38,.1); }
+
+    .apply-btn { padding: 6px 16px; background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%); color: #fff; border: none; border-radius: 7px; font-size: 12.5px; font-weight: 600; transition: opacity .18s, transform .12s, box-shadow .18s; box-shadow: 0 2px 8px rgba(220,38,38,.25); font-family: inherit; }
+    .apply-btn:hover { opacity: .9; transform: translateY(-1px); box-shadow: 0 4px 14px rgba(220,38,38,.32); }
+    .apply-btn:active { transform: scale(.97); }
+    .quick-btns { display: flex; gap: 5px; }
+    .quick-btn { padding: 5px 10px; border: 1.5px solid var(--border); border-radius: 6px; background: #f8fafc; font-size: 11.5px; font-weight: 500; color: var(--text-muted); transition: all .15s; font-family: inherit; }
+    .quick-btn:hover, .quick-btn.active { background: var(--primary); color: #fff; border-color: var(--primary); box-shadow: 0 2px 8px rgba(220,38,38,.2); }
+
+    .kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 18px; }
+    .kpi-card { background: #fff; border-radius: var(--radius); padding: 16px 18px; border: 1px solid var(--border); transition: transform .2s cubic-bezier(.4,0,.2,1), box-shadow .2s; box-shadow: var(--shadow-sm); animation: scaleIn .3s cubic-bezier(.4,0,.2,1) both; position: relative; overflow: hidden; }
+    .kpi-card::after { content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px; background: linear-gradient(90deg, var(--primary), #f87171); border-radius: var(--radius) var(--radius) 0 0; opacity: 0; transition: opacity .2s; }
+    .kpi-card:hover { transform: translateY(-3px); box-shadow: var(--shadow-md); }
+    .kpi-card:hover::after { opacity: 1; }
+    .kpi-card .kpi-label { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .7px; color: var(--text-muted); margin-bottom: 7px; }
+    .kpi-card .kpi-value { font-size: 28px; font-weight: 800; color: var(--text); letter-spacing: -1px; line-height: 1.1; }
+    .kpi-card .kpi-sub { font-size: 11.5px; color: var(--text-muted); margin-top: 4px; }
+    .kpi-card .kpi-icon { font-size: 24px; float: right; margin-top: -2px; opacity: .65; transition: transform .2s, opacity .2s; }
+    .kpi-card:hover .kpi-icon { transform: scale(1.2) rotate(-5deg); opacity: .9; }
+
+    .chart-card { background: #fff; border-radius: var(--radius); padding: 18px; border: 1px solid var(--border); box-shadow: var(--shadow-sm); transition: box-shadow .2s; animation: fadeSlideIn .32s cubic-bezier(.4,0,.2,1) both; }
+    .chart-card:hover { box-shadow: var(--shadow-md); }
+    .chart-card.full { grid-column: 1 / -1; }
+    .chart-title { font-size: 15px; font-weight: 700; color: var(--text); margin-bottom: 3px; letter-spacing: -.2px; }
+    .chart-subtitle { font-size: 12px; color: var(--text-muted); margin-bottom: 12px; }
+    .chart-wrap { position: relative; height: 300px; }
+
+    .empty-state { text-align: center; padding: 48px 20px; color: var(--text-muted); animation: fadeSlideIn .3s ease both; }
+    .empty-state .empty-icon { font-size: 42px; margin-bottom: 10px; display: block; filter: grayscale(.3); }
+    .loading-overlay { display: flex; align-items: center; justify-content: center; height: 100px; color: var(--text-muted); gap: 10px; font-size: 13px; animation: fadeIn .2s ease both; }
+    .spinner { display: inline-block; width: 18px; height: 18px; border: 2.5px solid rgba(220,38,38,.15); border-top-color: var(--primary); border-radius: 50%; animation: spin .65s cubic-bezier(.4,0,.6,1) infinite; }
+
+    .filter-pill { display: inline-flex; align-items: center; gap: 4px; padding: 3px 10px; background: #fff; border: 1px solid var(--border); border-radius: 20px; font-size: 12px; font-weight: 600; color: var(--text); }
+    .export-btn { padding: 7px 14px; background: #f0fdf4; color: #166534; border: 1.5px solid #bbf7d0; border-radius: 8px; font-size: 12px; font-weight: 600; transition: background .2s; display: inline-flex; align-items: center; gap: 6px; }
+    .export-btn:hover { background: #dcfce7; }
+
+    /* ── Category tabs (Footfall / Passerby) ── */
+    .cat-tabs { display: flex; background: #f1f5f9; border-radius: 9px; padding: 3px; gap: 3px; margin-bottom: 16px; width: fit-content; }
+    .cat-tab { padding: 7px 20px; border: none; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .18s, color .18s; background: transparent; color: var(--text-muted); font-family: inherit; }
+    .cat-tab.active { background: var(--primary); color: #fff; box-shadow: 0 2px 8px rgba(220,38,38,.3); }
+
+    /* ── Heatmap ── */
+    #lightbox { display: none; position: fixed; inset: 0; z-index: 10000; background: rgba(0, 0, 0, .88); align-items: center; justify-content: center; padding: 20px; }
+    #lightbox.open { display: flex; }
+    #lightbox-img { max-width: 92vw; max-height: 88vh; border-radius: 10px; box-shadow: 0 20px 80px rgba(0, 0, 0, .7); object-fit: contain; }
+
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+  </style>
+</head>
+
+<body>
+
+  <!-- ── Login ── -->
+  <div id="login-screen">
+    <div class="login-card">
+      <div class="login-left">
+        <div class="ll-tarsyer-row">
+          <img src="/tarsyer.png" alt="Tarsyer" class="ll-tarsyer-logo" />
+        </div>
+        <div class="ll-label">— Tarsyer Store Manager</div>
+        <div class="ll-headline">Master Your<br>Store Performance.</div>
+        <div class="ll-sub">Real-time video analytics &amp; footfall intelligence — unified in one powerful platform.</div>
+        <div class="ll-pills">
+          <div class="ll-pill"><span class="ll-dot" style="background:#ef4444;box-shadow:0 0 6px #ef4444"></span>Live Store Monitoring</div>
+          <div class="ll-pill"><span class="ll-dot" style="background:#22c55e;box-shadow:0 0 6px #22c55e"></span>AI-Powered Insights</div>
+          <div class="ll-pill"><span class="ll-dot" style="background:#3b82f6;box-shadow:0 0 6px #3b82f6"></span>Heat Mapping</div>
+        </div>
+        <div class="ll-contact">
+          <a href="mailto:tarsyer-support@tarsyer.com"><span class="ll-contact-icon">✉</span>tarsyer-support@tarsyer.com</a>
+        </div>
+      </div>
+
+      <div class="login-right">
+        <div class="lr-tarsyer-row">
+          <img src="/tarsyer.png" alt="Tarsyer" class="ll-tarsyer-logo" />
+        </div>
+        <div class="lr-logo-wrap">
+          <img src="/cultfit_logo.png" alt="cult.fit" class="lr-client-logo" />
+        </div>
+        <div class="lr-welcome">Welcome Back</div>
+        <div class="lr-title">Sign In</div>
+        <div class="lr-subtitle">Enter credentials to access dashboard.</div>
+
+        <label class="login-field-label">Username</label>
+        <div class="login-input-wrap">
+          <input id="login-user" type="text" placeholder="Enter username" autocomplete="username" />
+        </div>
+
+        <label class="login-field-label">Password</label>
+        <div class="login-input-wrap">
+          <input id="login-pass" type="password" placeholder="Enter password" autocomplete="current-password" />
+        </div>
+
+        <button class="login-btn" id="login-btn">Sign In →</button>
+        <div class="login-error" id="login-error"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Lightbox modal ── -->
+  <div id="lightbox" onclick="closeLightbox()">
+    <div onclick="event.stopPropagation()" style="position:relative;display:flex;flex-direction:column;align-items:center;max-width:82vw">
+      <button onclick="closeLightbox()" style="position:absolute;top:-18px;right:-18px;width:38px;height:38px;border-radius:50%;background:#fff;border:none;cursor:pointer;font-size:22px;font-weight:300;line-height:38px;text-align:center;box-shadow:0 4px 16px rgba(0,0,0,.4);z-index:1;color:#111">×</button>
+      <img id="lightbox-img" src="" alt="" />
+      <div id="lightbox-caption" style="margin-top:14px;background:rgba(0,0,0,.65);color:#fff;font-size:13.5px;font-weight:500;padding:8px 22px;border-radius:30px;letter-spacing:.3px;text-align:center;max-width:600px"></div>
+    </div>
+  </div>
+
+  <!-- ── App ── -->
+  <div id="app">
+    <header class="topbar">
+      <div class="topbar-brand">
+        <img src="/tarsyer.png" alt="Tarsyer" />
+        <span style="width:1px;height:28px;background:rgba(255,255,255,.3);display:inline-block;margin:0 4px;"></span>
+        <div style="background:#fff;border-radius:6px;padding:3px 10px;display:inline-flex;align-items:center">
+          <img src="/cultfit_logo.png" alt="cult.fit" style="height:22px;object-fit:contain" />
+        </div>
+      </div>
+      <div class="topbar-center">
+        <span class="topbar-title">Cultfit Analytics Dashboard</span>
+      </div>
+      <div class="topbar-right">
+        <div class="topbar-user-chip">
+          <div class="topbar-user-avatar" id="topbar-avatar">U</div>
+          <span class="topbar-user" id="topbar-user"></span>
+        </div>
+        <button class="logout-btn" id="logout-btn">⎋ Sign Out</button>
+      </div>
+    </header>
+
+    <div class="app-body">
+      <nav class="sidebar" id="sidebar">
+        <button class="sidebar-toggle" id="sidebar-toggle" title="Toggle sidebar">◀</button>
+        <div class="sidebar-section" style="margin-top:8px">Analytics</div>
+        <button class="nav-item active" data-view="footfall" data-label="Footfall Monitoring">
+          <span class="icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg></span><span class="nav-label">Footfall Monitoring</span>
+        </button>
+        <button class="nav-item" data-view="heatmap" data-label="Heat Mapping Analytics">
+          <span class="icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><line x1="2" y1="12" x2="22" y2="12"/></svg></span><span class="nav-label">Heatmap</span>
+        </button>
+      </nav>
+
+      <main class="content" id="main-content">
+        <!-- Filters -->
+        <div class="filters-bar">
+          <label>From</label>
+          <input type="date" id="f-start" />
+          <label>To</label>
+          <input type="date" id="f-end" />
+          <label>Store</label>
+          <div class="store-search-wrap" id="store-search-wrap">
+            <div class="store-search-trigger" id="store-search-trigger" onclick="toggleStoreDropdown()">
+              <span id="store-selected-label">All Stores</span>
+              <span style="font-size:10px;color:#94a3b8;">▼</span>
+            </div>
+            <div class="store-search-dropdown" id="store-search-dropdown">
+              <input type="text" class="store-search-input" id="store-search-input" placeholder="Search store…" oninput="filterStoreList(this.value)" autocomplete="off" />
+              <div class="store-search-list" id="store-search-list"></div>
+            </div>
+          </div>
+          <select id="f-store" style="display:none"></select>
+          <button class="apply-btn" id="apply-filters">Apply</button>
+          <button class="export-btn" id="export-btn" onclick="handleExport()" title="Export data to CSV">⬇ Export CSV</button>
+          <div class="quick-btns">
+            <button class="quick-btn" data-quick="today">Today</button>
+            <button class="quick-btn active" data-quick="7d">7 Days</button>
+            <button class="quick-btn" data-quick="30d">30 Days</button>
+            <button class="quick-btn" data-quick="mtd">MTD</button>
+          </div>
+        </div>
+        <div id="active-filter-bar" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px;min-height:24px"></div>
+
+        <!-- ── FOOTFALL MONITORING ── -->
+        <div id="view-footfall">
+          <div class="cat-tabs">
+            <button class="cat-tab active" id="cat-tab-footfall" onclick="ffSetCategory('footfall')">Footfall</button>
+            <button class="cat-tab" id="cat-tab-passerby" onclick="ffSetCategory('passerby')">Passerby</button>
+          </div>
+
+          <div class="kpi-grid" id="kpi-footfall" style="margin-bottom:16px"></div>
+
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px">
+            <span style="font-size:13px;font-weight:600;color:var(--text-muted)">View by:</span>
+            <div style="display:flex;background:#f1f5f9;border-radius:9px;padding:3px;gap:3px">
+              <button id="ff-toggle-day" onclick="ffSetView('day')"
+                style="padding:6px 18px;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;transition:background .18s,color .18s;background:transparent;color:var(--text-muted)">Day</button>
+              <button id="ff-toggle-hour" onclick="ffSetView('hour')"
+                style="padding:6px 18px;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;transition:background .18s,color .18s;background:var(--primary);color:#fff;box-shadow:0 2px 8px rgba(220,38,38,.3)">Hour</button>
+            </div>
+          </div>
+
+          <div class="chart-card full" style="margin-bottom:16px">
+            <div id="ff-chart-header" style="margin-bottom:14px">
+              <div class="chart-title" id="ff-chart-title">Footfall by Hour</div>
+              <div class="chart-subtitle" id="ff-chart-sub">Visitors per hour</div>
+            </div>
+            <div class="chart-wrap" style="height:320px"><canvas id="ff-main-chart"></canvas></div>
+          </div>
+
+          <div class="chart-card full">
+            <div style="margin-bottom:14px">
+              <div class="chart-title">Store Comparison</div>
+              <div class="chart-subtitle" style="color:#3b82f6">Total footfall per store in selected period</div>
+            </div>
+            <div class="chart-wrap" style="height:260px"><canvas id="ff-store-chart"></canvas></div>
+          </div>
+        </div>
+
+        <!-- ── HEAT MAPPING ANALYTICS ── -->
+        <div id="view-heatmap" style="display:none">
+          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;padding:13px 18px;background:#fff;border-radius:12px;border:1px solid var(--border);box-shadow:var(--shadow-sm)">
+            <span style="font-size:11.5px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.6px;white-space:nowrap;flex-shrink:0">📍 Camera</span>
+            <div id="hm-loc-pills" style="display:flex;gap:7px;flex-wrap:wrap"></div>
+          </div>
+
+          <div class="kpi-grid" id="kpi-heatmap" style="margin-bottom:18px"></div>
+          <div id="hm-canvas-area"></div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    // ── State ────────────────────────────────────────────────────────────────
+    const S = { view: 'footfall', start: '', end: '', store: 'all', charts: {} };
+    let _ffCategory = 'footfall';
+    let _ffView = 'day';
+    let _ffData = null;
+
+    function fmt(n) { return (n || 0).toLocaleString(); }
+
+    const TH_TOTAL = '#EF4444'; const TH_TOTAL_BG = 'rgba(239, 68, 68, 0.1)';
+    const TH_MALE = '#3B82F6'; const TH_MALE_BG = 'rgba(59, 130, 246, 0.1)';
+    const TH_FEMALE = '#10B981'; const TH_FEMALE_BG = 'rgba(16, 185, 129, 0.1)';
+    const TH_BAD_BAR = 'rgba(239, 68, 68, 0.85)';
+
+    const ICON_MALE = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${TH_MALE}" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
+    const ICON_FEMALE = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${TH_FEMALE}" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
+    const ICON_TOTAL = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${TH_TOTAL}" stroke-width="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`;
+
+    function destroyChart(id) { if (S.charts[id]) { S.charts[id].destroy(); delete S.charts[id]; } }
+    function makeChart(id, config) {
+      destroyChart(id);
+      const ctx = document.getElementById(id);
+      if (!ctx) return;
+      S.charts[id] = new Chart(ctx, config);
+    }
+
+    function loading(el) { el.innerHTML = `<div class="loading-overlay"><span class="spinner"></span> Loading...</div>`; }
+    function kpi(label, value, sub, icon) {
+      return `<div class="kpi-card">
+        <span class="kpi-icon">${icon}</span>
+        <div class="kpi-label">${label}</div>
+        <div class="kpi-value">${value}</div>
+        <div class="kpi-sub">${sub}</div>
+      </div>`;
+    }
+
+    function updateFilterDisplay() {
+      const bar = document.getElementById('active-filter-bar');
+      if (!bar || !S.start) return;
+      const storeLabel = S.store === 'all' ? 'All Stores' : S.store;
+      bar.innerHTML = `<span style="font-size:12px;color:var(--text-muted)">Showing:</span>
+        <span class="filter-pill">📅 ${S.start} → ${S.end}</span>
+        <span class="filter-pill">🏪 ${storeLabel}</span>`;
+    }
+
+    // ── Lightbox ────────────────────────────────────────────────────────────
+    function openLightbox(src, caption) {
+      const lb = document.getElementById('lightbox');
+      document.getElementById('lightbox-img').src = src;
+      document.getElementById('lightbox-caption').textContent = caption || '';
+      lb.classList.add('open');
+      document.body.style.overflow = 'hidden';
+    }
+    function closeLightbox() {
+      document.getElementById('lightbox').classList.remove('open');
+      document.body.style.overflow = '';
+    }
+    document.addEventListener('keydown', e => { if (e.key === 'Escape') closeLightbox(); });
+
+    // ── API ─────────────────────────────────────────────────────────────────
+    const FETCH_TIMEOUT_MS = 90000;
+
+    function showDbBanner(msg) {
+      let banner = document.getElementById('db-banner');
+      if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'db-banner';
+        banner.style.cssText = `position:fixed;bottom:20px;left:50%;transform:translateX(-50%);background:#1e293b;color:#f8fafc;padding:12px 22px;border-radius:10px;font-size:13px;z-index:9000;box-shadow:0 8px 30px rgba(0,0,0,.35);display:flex;align-items:center;gap:10px;max-width:90vw;`;
+        document.body.appendChild(banner);
+      }
+      banner.innerHTML = `<span style="font-size:18px">⚠️</span> <span>${msg}</span>`;
+      banner.style.display = 'flex';
+      clearTimeout(banner._t);
+      banner._t = setTimeout(() => { banner.style.display = 'none'; }, 6000);
+    }
+
+    async function fetchWithTimeout(url, opts = {}) {
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+      try { return await fetch(url, { ...opts, signal: ctrl.signal }); }
+      finally { clearTimeout(tid); }
+    }
+
+    async function apiRaw(path, extra = {}) {
+      const params = new URLSearchParams({ start: S.start, end: S.end, store: S.store, ...extra });
+      try {
+        const r = await fetchWithTimeout(`/api${path}?${params}`, { credentials: 'include' });
+        if (r.status === 401) { showLogin(); return null; }
+        if (r.status === 503) { showDbBanner('Database unreachable'); return null; }
+        if (!r.ok) { showDbBanner(`Server error (${r.status})`); return null; }
+        try { return await r.json(); } catch { showDbBanner('Invalid server response'); return null; }
+      } catch (e) {
+        showDbBanner(e.name === 'AbortError' ? 'Request timed out' : 'Network error');
+        return null;
+      }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // FOOTFALL / PASSERBY
+    // ─────────────────────────────────────────────────────────────────────────
+    function ffSetCategory(cat) {
+      _ffCategory = cat;
+      document.getElementById('cat-tab-footfall').classList.toggle('active', cat === 'footfall');
+      document.getElementById('cat-tab-passerby').classList.toggle('active', cat === 'passerby');
+      loadFootfall();
+    }
+
+    function ffSetView(v) {
+      _ffView = v;
+      document.getElementById('ff-toggle-day').style.cssText  = v === 'day'
+        ? 'padding:6px 18px;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;transition:background .18s,color .18s;background:var(--primary);color:#fff;box-shadow:0 2px 8px rgba(220,38,38,.3)'
+        : 'padding:6px 18px;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;transition:background .18s,color .18s;background:transparent;color:var(--text-muted)';
+      document.getElementById('ff-toggle-hour').style.cssText = v === 'hour'
+        ? 'padding:6px 18px;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;transition:background .18s,color .18s;background:var(--primary);color:#fff;box-shadow:0 2px 8px rgba(220,38,38,.3)'
+        : 'padding:6px 18px;border:none;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;transition:background .18s,color .18s;background:transparent;color:var(--text-muted)';
+      if (_ffData) ffRenderMainChart(_ffData);
+    }
+
+    function ffRenderMainChart(d) {
+      destroyChart('ff-main-chart');
+      const titleEl = document.getElementById('ff-chart-title');
+      const subEl   = document.getElementById('ff-chart-sub');
+      const catLabel = _ffCategory === 'passerby' ? 'Passerby' : 'Footfall';
+      const rows = _ffView === 'hour' ? d.hourly : d.daily;
+      const labels = _ffView === 'hour' ? rows.map(r => r.hour) : rows.map(r => r.date);
+
+      if (titleEl) titleEl.textContent = `${catLabel} by ${_ffView === 'hour' ? 'Hour' : 'Day'}`;
+      if (subEl)   subEl.textContent   = `${_ffView === 'hour' ? 'Visitors per hour' : 'Daily visitor breakdown'} — Male / Female`;
+
+      makeChart('ff-main-chart', {
+        type: 'line',
+        data: {
+          labels,
+          datasets: [
+            { label: 'Total',  data: rows.map(r => r.total),  borderColor: TH_TOTAL,  backgroundColor: TH_TOTAL_BG,  tension: 0.4, fill: true,  pointRadius: 4, pointHoverRadius: 6, borderWidth: 2.5 },
+            { label: 'Male',   data: rows.map(r => r.male),   borderColor: TH_MALE,   backgroundColor: TH_MALE_BG,   tension: 0.4, fill: false, pointRadius: 3, pointHoverRadius: 5, borderWidth: 2 },
+            { label: 'Female', data: rows.map(r => r.female), borderColor: TH_FEMALE, backgroundColor: TH_FEMALE_BG, tension: 0.4, fill: false, pointRadius: 3, pointHoverRadius: 5, borderWidth: 2 },
+          ],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { position: 'top', labels: { boxWidth: 12, font: { size: 12 } } } },
+          scales: {
+            x: { grid: { display: false }, ticks: { font: { size: 11 } } },
+            y: { beginAtZero: true, grid: { color: '#f1f5f9' }, ticks: { font: { size: 11 } }, title: { display: true, text: 'Visitors', font: { size: 11 }, color: '#94a3b8' } },
+          },
+          interaction: { mode: 'index', intersect: false },
+        },
+      });
+    }
+
+    async function loadFootfall() {
+      loading(document.getElementById('kpi-footfall'));
+      destroyChart('ff-main-chart');
+      destroyChart('ff-store-chart');
+
+      const d = await apiRaw('/cultfit/footfall', { category: _ffCategory });
+      if (!d) {
+        document.getElementById('kpi-footfall').innerHTML = `<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">📭</div><p>No data available</p></div>`;
+        return;
+      }
+      _ffData = d;
+
+      const total = d.total || 0;
+      const menPct = total ? Math.round(d.men   / total * 100) : 0;
+      const womPct = total ? Math.round(d.women / total * 100) : 0;
+      const catLabel = _ffCategory === 'passerby' ? 'Passerby' : 'Footfall';
+
+      document.getElementById('kpi-footfall').innerHTML = `
+        ${kpi('Total ' + catLabel, total.toLocaleString(), 'selected period total', ICON_TOTAL)}
+        ${kpi('Men',   d.men.toLocaleString(),   menPct + '% of total', ICON_MALE)}
+        ${kpi('Women', d.women.toLocaleString(), womPct + '% of total', ICON_FEMALE)}
+      `;
+
+      ffRenderMainChart(d);
+
+      const byStore = d.by_store || [];
+      if (!byStore.length) {
+        destroyChart('ff-store-chart');
+      } else {
+        makeChart('ff-store-chart', {
+          type: 'bar',
+          data: {
+            labels: byStore.map(r => r.store),
+            datasets: [{ label: 'Total ' + catLabel, data: byStore.map(r => r.total), backgroundColor: TH_BAD_BAR, borderRadius: 6, barPercentage: 0.55 }],
+          },
+          options: {
+            indexAxis: 'y',
+            responsive: true, maintainAspectRatio: false,
+            plugins: { legend: { position: 'top', labels: { boxWidth: 12, font: { size: 12 } } } },
+            scales: {
+              x: { beginAtZero: true, grid: { color: '#f1f5f9' }, ticks: { font: { size: 11 } }, title: { display: true, text: 'Visitors', font: { size: 11 }, color: '#94a3b8' } },
+              y: { grid: { display: false }, ticks: { font: { size: 12 } } },
+            },
+          },
+        });
+      }
+    }
+
+    function handleExport() {
+      if (S.view !== 'footfall') { showDbBanner('Export is only available on the Footfall page.'); return; }
+      const params = new URLSearchParams({ start: S.start, end: S.end, category: _ffCategory });
+      if (S.store && S.store !== 'all') params.set('store', S.store);
+      window.location.href = `/api/export/footfall?${params}`;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // HEATMAP — real MongoDB data + canvas overlay
+    // ─────────────────────────────────────────────────────────────────────────
+    const HM_CAMERAS = { 1: { label: 'Camera 1' }, 2: { label: 'Camera 2' } };
+    const HM_CAM_ORDER = [1, 2];
+    if (window._hmCam === undefined) window._hmCam = '1';
+
+    function hmSelectCam(cam) {
+      window._hmCam = String(cam);
+      loadHeatmap();
+    }
+
+    function _hmRamp() {
+      const ramp = new Array(256);
+      for (let v = 0; v < 256; v++) {
+        if (v === 0) { ramp[v] = [0, 0, 0, 0]; continue; }
+        const t = v / 255;
+        const A = Math.round(90 + t * 125);
+        let R, G, B;
+        if (t < 0.30) { const s = t / 0.30; R = Math.round(20 + 120 * s); G = Math.round(160 + 40 * s); B = 0; }
+        else if (t < 0.55) { const s = (t - 0.30) / 0.25; R = Math.round(140 + 115 * s); G = Math.round(200 + 30 * s); B = 0; }
+        else if (t < 0.75) { const s = (t - 0.55) / 0.20; R = 255; G = Math.round(230 - 150 * s); B = 0; }
+        else { const s = (t - 0.75) / 0.25; R = Math.round(255 - 15 * s); G = Math.round(80 - 80 * s); B = 0; }
+        ramp[v] = [R, G, B, A];
+      }
+      return ramp;
+    }
+    const _HM_RAMP = _hmRamp();
+
+    function renderCamHeatmap(cam) {
+      const imgEl    = document.getElementById(`hm-bg-${cam.camera_no}`);
+      const canvasEl = document.getElementById(`hm-canvas-${cam.camera_no}`);
+      if (!imgEl || !canvasEl || !cam.points || !cam.points.length) return;
+
+      // Bbox coordinates were detected against a fixed 960x1088 frame (cam.src_w/src_h).
+      // Scale them to whatever resolution the displayed image actually renders at.
+      const detW = cam.src_w || 960;
+      const detH = cam.src_h || 1088;
+
+      const doRender = () => {
+        const srcW = imgEl.naturalWidth  || detW;
+        const srcH = imgEl.naturalHeight || detH;
+        if (!srcW || !srcH) return;
+
+        const scaleX = srcW / detW;
+        const scaleY = srcH / detH;
+
+        canvasEl.width  = srcW;
+        canvasEl.height = srcH;
+
+        const F  = 4;
+        const lW = Math.ceil(srcW / F), lH = Math.ceil(srcH / F);
+        const density = new Float32Array(lW * lH);
+        const R  = Math.max(15, Math.round(lW / 30));
+        const R2 = R * R;
+
+        for (const p of cam.points) {
+          const cx = ((p.x1 + p.x2) / 2 * scaleX) / F;
+          const cy = ((p.y1 + p.y2) / 2 * scaleY) / F;
+          const x0 = Math.max(0,      Math.floor(cx - R));
+          const x1 = Math.min(lW - 1, Math.ceil(cx + R));
+          const y0 = Math.max(0,      Math.floor(cy - R));
+          const y1 = Math.min(lH - 1, Math.ceil(cy + R));
+          for (let y = y0; y <= y1; y++) {
+            for (let x = x0; x <= x1; x++) {
+              const dx = x - cx, dy = y - cy;
+              const d2 = dx * dx + dy * dy;
+              if (d2 < R2) {
+                const w = 1 - d2 / R2;
+                density[y * lW + x] += w * w;
+              }
+            }
+          }
+        }
+
+        let maxD = 0;
+        for (let i = 0; i < density.length; i++) if (density[i] > maxD) maxD = density[i];
+        if (maxD === 0) return;
+
+        const lowC = document.createElement('canvas');
+        lowC.width = lW; lowC.height = lH;
+        const lowCtx = lowC.getContext('2d');
+        const id = lowCtx.createImageData(lW, lH);
+        const d  = id.data;
+
+        for (let i = 0; i < density.length; i++) {
+          if (density[i] === 0) continue;
+          const val = Math.min(255, Math.round(Math.pow(density[i] / maxD, 0.45) * 255));
+          const col = _HM_RAMP[val];
+          const j = i * 4;
+          d[j] = col[0]; d[j + 1] = col[1]; d[j + 2] = col[2]; d[j + 3] = col[3];
+        }
+        lowCtx.putImageData(id, 0, 0);
+
+        const ctx = canvasEl.getContext('2d');
+        ctx.clearRect(0, 0, srcW, srcH);
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = 'high';
+        ctx.drawImage(lowC, 0, 0, srcW, srcH);
+      };
+
+      if (imgEl.complete && imgEl.naturalWidth > 0) doRender();
+      else imgEl.addEventListener('load', doRender);
+    }
+
+    let _hmDataCache = {};
+
+    async function loadHeatmap() {
+      const kpiEl   = document.getElementById('kpi-heatmap');
+      const areaEl  = document.getElementById('hm-canvas-area');
+      const pillsEl = document.getElementById('hm-loc-pills');
+
+      const selCam = window._hmCam || String(HM_CAM_ORDER[0]);
+      const cacheKey = `${S.start}_${S.end}_${S.store || 'all'}_${selCam}`;
+
+      if (kpiEl)  kpiEl.innerHTML = '';
+      if (areaEl) areaEl.innerHTML = '<div class="loading-overlay" style="min-height:300px;display:flex;align-items:center;justify-content:center"><span class="spinner"></span> &nbsp; Loading heatmap data...</div>';
+
+      let data = _hmDataCache[cacheKey];
+      if (!data) {
+        const params = { start: S.start, end: S.end, store: S.store || 'all', camera: selCam };
+        data = await apiRaw('/cultfit/heatmap', params);
+        _hmDataCache[cacheKey] = data;
+      }
+
+      if (pillsEl) {
+        pillsEl.innerHTML = HM_CAM_ORDER.map(c => {
+          const isActive = selCam === String(c);
+          return `<button onclick="hmSelectCam('${c}')"
+            style="padding:5px 13px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;
+              white-space:nowrap;transition:all .15s;font-family:inherit;
+              border:1.5px solid ${isActive ? 'var(--primary)' : '#e2e8f0'};
+              background:${isActive ? 'var(--primary)' : '#f8fafc'};
+              color:${isActive ? '#fff' : '#475569'}">
+            ${HM_CAMERAS[c].label}</button>`;
+        }).join('');
+      }
+
+      if (!data) {
+        if (kpiEl) kpiEl.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">🔌</div><p>Database unavailable</p></div>`;
+        if (areaEl) areaEl.innerHTML = '';
+        return;
+      }
+
+      const cam = (data.cameras || [])[0] || { docs: 0, male: 0, female: 0, child: 0, staff: 0 };
+
+      if (kpiEl) {
+        const hmTotal = (cam.male || 0) + (cam.female || 0) + (cam.child || 0);
+        let mPct = 0, fPct = 0, cPct = 0;
+        if (hmTotal > 0) {
+          mPct = Math.round((cam.male / hmTotal) * 100);
+          fPct = Math.round((cam.female / hmTotal) * 100);
+          cPct = Math.round((cam.child / hmTotal) * 100);
+          let diff = 100 - (mPct + fPct + cPct);
+          if (diff !== 0) {
+            if (mPct >= fPct && mPct >= cPct) mPct += diff;
+            else if (fPct >= mPct && fPct >= cPct) fPct += diff;
+            else cPct += diff;
+          }
+        }
+        kpiEl.innerHTML = [
+          { icon: '&#128104;', label: 'Male', value: mPct + '%' },
+          { icon: '&#128105;', label: 'Female', value: fPct + '%' },
+          { icon: '&#128102;', label: 'Children', value: cPct + '%' },
+          { icon: '📸', label: 'Snapshots', value: fmt(cam.docs || 0) },
+        ].map(k => `<div class="kpi-card">
+          <span class="kpi-icon">${k.icon}</span>
+          <div class="kpi-label">${k.label}</div>
+          <div class="kpi-value" style="font-size:${String(k.value).length > 6 ? '18px' : '28px'}">${k.value}</div>
+        </div>`).join('');
+      }
+
+      if (!areaEl) return;
+
+      if (!cam.image) {
+        areaEl.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><p>No base image available for this camera (nvr_monitoring, stream_type=sub)</p></div>';
+        return;
+      }
+
+      if (!cam.docs) {
+        areaEl.innerHTML = `
+          <div class="chart-card full">
+            <div style="position:relative;border-radius:10px;overflow:hidden;border:2px solid #e2e8f0;cursor:zoom-in;background:#0f172a"
+                 onclick="openLightbox('${cam.image}','${HM_CAMERAS[cam.camera_no].label}')">
+              <img src="${cam.image}" alt="${HM_CAMERAS[cam.camera_no].label}" style="width:100%;display:block;max-height:560px;object-fit:contain;background:#0f172a"/>
+            </div>
+            <div class="empty-state"><div class="empty-icon">📭</div><p>No heatmap data for the selected period</p></div>
+          </div>`;
+        return;
+      }
+
+      areaEl.innerHTML = `
+        <div class="chart-card full">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px">
+            <div>
+              <div style="font-size:17px;font-weight:800;color:#0f172a;margin-bottom:3px">Store Heatmap — Customer Movement Pattern</div>
+              <div style="font-size:12.5px;color:#64748b">${HM_CAMERAS[cam.camera_no].label} &nbsp;·&nbsp; ${cam.docs} snapshots</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+              <span style="font-size:12px;font-weight:600;color:#475569">Low</span>
+              <div style="width:130px;height:12px;border-radius:6px;background:linear-gradient(to right,#14a040,#facc15,#f97316,#dc2626);box-shadow:0 1px 4px rgba(0,0,0,.1)"></div>
+              <span style="font-size:12px;font-weight:600;color:#475569">High</span>
+            </div>
+          </div>
+          <div style="position:relative;border-radius:10px;overflow:hidden;border:2px solid #e2e8f0;cursor:zoom-in;background:#0f172a"
+               onclick="openLightbox('${cam.image}','${HM_CAMERAS[cam.camera_no].label}')">
+            <img id="hm-bg-${cam.camera_no}" src="${cam.image}" alt="${HM_CAMERAS[cam.camera_no].label}"
+                 style="width:100%;display:block;max-height:560px;object-fit:contain;background:#0f172a;pointer-events:none"/>
+            <canvas id="hm-canvas-${cam.camera_no}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;pointer-events:none"></canvas>
+          </div>
+        </div>`;
+
+      setTimeout(() => renderCamHeatmap(cam), 0);
+    }
+
+    // ── Login ───────────────────────────────────────────────────────────────
+    function showLogin() {
+      document.getElementById('login-screen').classList.remove('hidden');
+      document.getElementById('app').classList.remove('visible');
+    }
+    function hideLogin() {
+      document.getElementById('login-screen').classList.add('hidden');
+      document.getElementById('app').classList.add('visible');
+    }
+
+    let _allStores = [];
+
+    function toggleStoreDropdown() {
+      const dd = document.getElementById('store-search-dropdown');
+      dd.classList.toggle('open');
+      if (dd.classList.contains('open')) {
+        document.getElementById('store-search-input').focus();
+        filterStoreList('');
+      }
+    }
+
+    function filterStoreList(q) {
+      const list = document.getElementById('store-search-list');
+      const items = [{ value: 'all', label: 'All Stores' }, ..._allStores.map(s => ({ value: s, label: s }))];
+      const filtered = q ? items.filter(i => i.label.toLowerCase().includes(q.toLowerCase())) : items;
+      list.innerHTML = filtered.map(i => `
+        <div class="store-search-item ${S.store === i.value ? 'selected' : ''}" onclick="selectStore('${i.value}','${i.label}')">${i.label}</div>`).join('');
+    }
+
+    function selectStore(value, label) {
+      S.store = value;
+      document.getElementById('store-selected-label').textContent = label;
+      document.getElementById('f-store').value = value;
+      document.getElementById('store-search-dropdown').classList.remove('open');
+      filterStoreList('');
+    }
+
+    document.addEventListener('click', e => {
+      const wrap = document.getElementById('store-search-wrap');
+      if (wrap && !wrap.contains(e.target)) {
+        document.getElementById('store-search-dropdown')?.classList.remove('open');
+      }
+    });
+
+    async function loadStores() {
+      try {
+        const r = await fetch('/api/cultfit/stores', { credentials: 'include' });
+        if (!r.ok) return;
+        _allStores = await r.json();
+        const sel = document.getElementById('f-store');
+        sel.innerHTML = '<option value="all">All Stores</option>';
+        _allStores.forEach(s => {
+          const opt = document.createElement('option');
+          opt.value = s; opt.textContent = s;
+          sel.appendChild(opt);
+        });
+        filterStoreList('');
+      } catch (e) { /* silent */ }
+    }
+
+    async function checkAuth() {
+      const r = await fetch('/api/me', { credentials: 'include' });
+      if (r.ok) {
+        const d = await r.json();
+        if (d.logged_in) {
+          document.getElementById('topbar-user').textContent = d.username + (d.region ? ' · ' + d.region : '');
+          document.getElementById('topbar-avatar').textContent = d.username.charAt(0).toUpperCase();
+          hideLogin(); await loadStores(); initDates(); updateFilterDisplay(); loadView();
+          return;
+        }
+      }
+      showLogin();
+    }
+
+    document.getElementById('login-btn').addEventListener('click', async () => {
+      const u = document.getElementById('login-user').value.trim();
+      const p = document.getElementById('login-pass').value;
+      const err = document.getElementById('login-error');
+      err.textContent = '';
+      const btn = document.getElementById('login-btn');
+      btn.textContent = 'Signing in…'; btn.disabled = true;
+      try {
+        const r = await fetch('/api/login', {
+          method: 'POST', credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username: u, password: p }),
+        });
+        const d = await r.json();
+        if (d.success) {
+          document.getElementById('topbar-user').textContent = d.username + (d.region ? ' · ' + d.region : '');
+          document.getElementById('topbar-avatar').textContent = d.username.charAt(0).toUpperCase();
+          hideLogin(); await loadStores(); initDates(); updateFilterDisplay(); loadView();
+        } else {
+          err.textContent = d.message || 'Login failed';
+        }
+      } finally {
+        btn.textContent = 'Sign In →'; btn.disabled = false;
+      }
+    });
+    document.getElementById('login-pass').addEventListener('keydown', e => {
+      if (e.key === 'Enter') document.getElementById('login-btn').click();
+    });
+    document.getElementById('logout-btn').addEventListener('click', async () => {
+      await fetch('/api/logout', { method: 'POST', credentials: 'include' });
+      showLogin();
+    });
+
+    // ── Date helpers ──────────────────────────────────────────────────────────
+    function initDates() {
+      const today = new Date();
+      const fmtD = d => d.toISOString().slice(0, 10);
+      const start = new Date(today); start.setDate(today.getDate() - 6);
+      S.start = fmtD(start); S.end = fmtD(today);
+      document.getElementById('f-start').value = S.start;
+      document.getElementById('f-end').value = S.end;
+    }
+
+    function setQuick(q) {
+      const today = new Date();
+      const fmtD = d => d.toISOString().slice(0, 10);
+      const s = new Date(today);
+      if (q === 'today') { /* noop */ }
+      else if (q === '7d') { s.setDate(today.getDate() - 6); }
+      else if (q === '30d') { s.setDate(today.getDate() - 29); }
+      else if (q === 'mtd') { s.setDate(1); }
+      S.start = fmtD(s); S.end = fmtD(today);
+      document.getElementById('f-start').value = S.start;
+      document.getElementById('f-end').value = S.end;
+      updateFilterDisplay();
+      loadView();
+    }
+
+    document.getElementById('apply-filters').addEventListener('click', () => {
+      S.start = document.getElementById('f-start').value;
+      S.end = document.getElementById('f-end').value;
+      S.store = document.getElementById('f-store').value;
+      updateFilterDisplay();
+      loadView();
+    });
+
+    document.querySelectorAll('.quick-btn').forEach(b => {
+      b.addEventListener('click', () => {
+        document.querySelectorAll('.quick-btn').forEach(x => x.classList.remove('active'));
+        b.classList.add('active');
+        setQuick(b.dataset.quick);
+      });
+    });
+
+    (function() {
+      const sidebar = document.getElementById('sidebar');
+      const toggleBtn = document.getElementById('sidebar-toggle');
+      toggleBtn.addEventListener('click', () => {
+        sidebar.classList.toggle('collapsed');
+        toggleBtn.textContent = sidebar.classList.contains('collapsed') ? '▶' : '◀';
+      });
+    })();
+
+    document.querySelectorAll('.nav-item').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        S.view = btn.dataset.view;
+        document.querySelectorAll('[id^="view-"]').forEach(v => { v.style.display = 'none'; v.classList.remove('view-enter'); });
+        const activeView = document.getElementById(`view-${S.view}`);
+        activeView.style.display = '';
+        void activeView.offsetWidth;
+        activeView.classList.add('view-enter');
+        loadView();
+      });
+    });
+
+    async function loadView() {
+      if (!S.start || !S.end) return;
+      if (S.view === 'footfall') await loadFootfall();
+      else if (S.view === 'heatmap') await loadHeatmap();
+    }
+
+    checkAuth();
+  </script>
+</body>
+</html>
