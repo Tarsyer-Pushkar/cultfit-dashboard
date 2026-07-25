@@ -17,7 +17,7 @@ app.config['SESSION_COOKIE_SECURE']   = False
 app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(hours=8)
 
 _allowed_origins = [o.strip() for o in os.environ.get(
-    'ALLOWED_ORIGINS', 'http://localhost:20690,http://127.0.0.1:20690'
+    'ALLOWED_ORIGINS', 'http://localhost:21699,http://127.0.0.1:21699'
 ).split(',')]
 CORS(app, origins=_allowed_origins, supports_credentials=True)
 
@@ -56,8 +56,8 @@ def _get_db():
 PROJECT_NAME = 'Cultfit'
 
 # ─── Auth ─────────────────────────────────────────────────────────────────────
-# Password hash is for: Tarsyer@2026
-_TARSYER_PASSWORD_HASH = '$2b$12$0wwgANOntm5QsPv15fkIf.T/6clHS8z3tlTm6bYNp8AyLtqhLvqDu'
+# Password hash is for: TarsyerxCult.fit
+_TARSYER_PASSWORD_HASH = '$2b$12$05O2Is25xTkix2429U8s/OklA/is/xfqEBjuffFx5UjPqrgbcmr8q'
 
 _STATIC_USERS = {
     'cultfit@tarsyer.com': {
@@ -485,5 +485,5 @@ def serve(path):
 
 if __name__ == '__main__':
     _get_db()  # Test connection at startup
-    port = int(os.environ.get('PORT', 20690))
+    port = int(os.environ.get('PORT', 21699))
     app.run(host='0.0.0.0', port=port, debug=(os.environ.get('FLASK_ENV') == 'development'))
