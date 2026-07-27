@@ -400,6 +400,8 @@
 
         <!-- ── FOOTFALL MONITORING ── -->
         <div id="view-footfall">
+          <div id="store-hours-card-footfall" style="display:none"></div>
+
           <div class="cat-tabs">
             <button class="cat-tab active" id="cat-tab-footfall" onclick="ffSetCategory('footfall')">Footfall</button>
             <button class="cat-tab" id="cat-tab-passerby" onclick="ffSetCategory('passerby')">Passerby</button>
@@ -436,6 +438,8 @@
 
         <!-- ── HEAT MAPPING ANALYTICS ── -->
         <div id="view-heatmap" style="display:none">
+          <div id="store-hours-card-heatmap" style="display:none"></div>
+
           <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;padding:13px 18px;background:#fff;border-radius:12px;border:1px solid var(--border);box-shadow:var(--shadow-sm)">
             <span style="font-size:11.5px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.6px;white-space:nowrap;flex-shrink:0">📍 Camera</span>
             <div id="hm-loc-pills" style="display:flex;gap:7px;flex-wrap:wrap"></div>
@@ -543,6 +547,42 @@
         showDbBanner(e.name === 'AbortError' ? 'Request timed out' : 'Network error');
         return null;
       }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // STORE HOURS
+    // ─────────────────────────────────────────────────────────────────────────
+    function fmt12h(hhmm) {
+      if (!hhmm) return '';
+      let [h, m] = hhmm.split(':').map(Number);
+      const ap = h >= 12 ? 'PM' : 'AM';
+      h = h % 12 || 12;
+      return `${h}:${String(m).padStart(2, '0')} ${ap}`;
+    }
+
+    async function loadStoreHours() {
+      const ids = ['store-hours-card-footfall', 'store-hours-card-heatmap'];
+      const els = ids.map(id => document.getElementById(id)).filter(Boolean);
+      if (!els.length) return;
+
+      const d = await apiRaw('/cultfit/store-hours');
+      if (!d || !d.available) {
+        els.forEach(el => { el.style.display = 'none'; el.innerHTML = ''; });
+        return;
+      }
+
+      const label = d.source === 'union'
+        ? 'Widest hours across all stores'
+        : 'Store hours';
+      const html = `
+        <div class="chart-card" style="margin-bottom:16px;display:flex;align-items:center;gap:12px">
+          <span style="font-size:22px">🕒</span>
+          <div>
+            <div style="font-size:11px;font-weight:700;color:var(--muted,#8492a6);text-transform:uppercase;letter-spacing:.6px">${label}</div>
+            <div style="font-size:16px;font-weight:700;color:#0f172a">${fmt12h(d.open)} &ndash; ${fmt12h(d.close)}</div>
+          </div>
+        </div>`;
+      els.forEach(el => { el.innerHTML = html; el.style.display = ''; });
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1052,6 +1092,7 @@
 
     async function loadView() {
       if (!S.start || !S.end) return;
+      loadStoreHours();
       if (S.view === 'footfall') await loadFootfall();
       else if (S.view === 'heatmap') await loadHeatmap();
     }
