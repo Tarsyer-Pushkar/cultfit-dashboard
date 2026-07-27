@@ -541,6 +541,69 @@ def cf_heatmap():
         print(f"[DB] Heatmap query error: {exc}")
         return jsonify({'error': 'Database query failed', 'detail': str(exc)}), 503
 
+# ─── Shopper Flow (reid collection — by store_location) ───────────────────────
+# gender.male/female/child/staff are each arrays of person track IDs, so the
+# "count" is their array length. gender.child's length is folded into male
+# (same rule as the 'footfall' category); gender.staff is ignored entirely.
+@app.route('/api/cultfit/shopper-flow')
+@require_login
+def cf_shopper_flow():
+    start_dt, end_dt, end_dt_inclusive, store = _parse_range()
+
+    db = _get_db()
+    if db is None:
+        return jsonify({'total': 0, 'men': 0, 'women': 0, 'by_location': [], 'db_connected': False})
+
+    try:
+        collection = db['reid']
+
+        match_filter = {
+            'project_name': PROJECT_NAME,
+            'date_time': {
+                '$gte': start_dt.strftime('%Y-%m-%d %H:%M:%S'),
+                '$lt':  end_dt_inclusive.strftime('%Y-%m-%d %H:%M:%S'),
+            }
+        }
+        if store:
+            match_filter['store_code'] = store
+
+        pipeline = [
+            {'$match': match_filter},
+            {'$addFields': {
+                'male_v': {'$add': [
+                    {'$size': {'$ifNull': ['$gender.male',  []]}},
+                    {'$size': {'$ifNull': ['$gender.child', []]}},
+                ]},
+                'female_v': {'$size': {'$ifNull': ['$gender.female', []]}},
+            }},
+            {'$group': {
+                '_id':    {'$ifNull': ['$store_location', 'Unknown']},
+                'male':   {'$sum': '$male_v'},
+                'female': {'$sum': '$female_v'},
+            }},
+            {'$addFields': {'total': {'$add': ['$male', '$female']}}},
+            {'$sort': {'total': -1}},
+        ]
+        by_location = [
+            {'location': r['_id'], 'male': r['male'], 'female': r['female'], 'total': r['total']}
+            for r in collection.aggregate(pipeline)
+        ]
+
+        total_male   = sum(r['male']   for r in by_location)
+        total_female = sum(r['female'] for r in by_location)
+
+        return jsonify({
+            'total':        total_male + total_female,
+            'men':          total_male,
+            'women':        total_female,
+            'by_location':  by_location,
+            'db_connected': True,
+        })
+
+    except Exception as exc:
+        print(f"[DB] Shopper flow query error: {exc}")
+        return jsonify({'error': 'Database query failed', 'detail': str(exc)}), 503
+
 # ─── Static / SPA ─────────────────────────────────────────────────────────────
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')

@@ -440,13 +440,34 @@
         <div id="view-heatmap" style="display:none">
           <div id="store-hours-card-heatmap" style="display:none"></div>
 
-          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;padding:13px 18px;background:#fff;border-radius:12px;border:1px solid var(--border);box-shadow:var(--shadow-sm)">
-            <span style="font-size:11.5px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.6px;white-space:nowrap;flex-shrink:0">📍 Camera</span>
-            <div id="hm-loc-pills" style="display:flex;gap:7px;flex-wrap:wrap"></div>
+          <div id="heatmap-select-store-prompt" style="display:none">
+            <div class="empty-state" style="padding:48px 20px">
+              <div class="empty-icon">🏪</div>
+              <p>Heatmap and Shopper Flow data are store-specific &mdash; select a single store above to view them.</p>
+            </div>
           </div>
 
-          <div class="kpi-grid" id="kpi-heatmap" style="margin-bottom:18px"></div>
-          <div id="hm-canvas-area"></div>
+          <div id="heatmap-content">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;padding:13px 18px;background:#fff;border-radius:12px;border:1px solid var(--border);box-shadow:var(--shadow-sm)">
+              <span style="font-size:11.5px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.6px;white-space:nowrap;flex-shrink:0">📍 Camera</span>
+              <div id="hm-loc-pills" style="display:flex;gap:7px;flex-wrap:wrap"></div>
+            </div>
+
+            <div class="kpi-grid" id="kpi-heatmap" style="margin-bottom:18px"></div>
+            <div id="hm-canvas-area"></div>
+
+            <!-- Shopper Flow (reid collection, by store_location) -->
+            <div style="margin:24px 0 16px;font-size:15px;font-weight:800;color:#0f172a">Shopper Flow</div>
+            <div class="kpi-grid" id="kpi-shopperflow" style="margin-bottom:16px"></div>
+
+            <div class="chart-card full">
+              <div style="margin-bottom:14px">
+                <div class="chart-title">Shopper Flow by Location</div>
+                <div class="chart-subtitle" style="color:#3b82f6">Male / Female visits per store location in selected period</div>
+              </div>
+              <div class="chart-wrap" style="height:320px"><canvas id="sf-location-chart"></canvas></div>
+            </div>
+          </div>
         </div>
       </main>
     </div>
@@ -692,6 +713,66 @@
       const params = new URLSearchParams({ start: S.start, end: S.end, category: _ffCategory });
       if (S.store && S.store !== 'all') params.set('store', S.store);
       window.location.href = `/api/export/footfall?${params}`;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SHOPPER FLOW — reid collection, grouped by store_location
+    // ─────────────────────────────────────────────────────────────────────────
+    function sfLocationLabel(loc) { return String(loc || '').replace(/_/g, ' '); }
+
+    async function loadShopperFlow() {
+      const kpiEl = document.getElementById('kpi-shopperflow');
+      loading(kpiEl);
+      destroyChart('sf-location-chart');
+
+      const d = await apiRaw('/cultfit/shopper-flow');
+      if (!d) {
+        kpiEl.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">📭</div><p>No data available</p></div>`;
+        return;
+      }
+
+      const total = d.total || 0;
+      const menPct = total ? Math.round(d.men   / total * 100) : 0;
+      const womPct = total ? Math.round(d.women / total * 100) : 0;
+
+      kpiEl.innerHTML = `
+        ${kpi('Total Shoppers', total.toLocaleString(), 'selected period total', ICON_TOTAL)}
+        ${kpi('Men',   d.men.toLocaleString(),   menPct + '% of total', ICON_MALE)}
+        ${kpi('Women', d.women.toLocaleString(), womPct + '% of total', ICON_FEMALE)}
+      `;
+
+      const byLoc = d.by_location || [];
+      const chartArea = document.getElementById('sf-location-chart').closest('.chart-card');
+      if (!byLoc.length) {
+        destroyChart('sf-location-chart');
+        if (chartArea) {
+          chartArea.querySelector('.chart-wrap').innerHTML =
+            '<div class="empty-state"><div class="empty-icon">📭</div><p>No shopper flow data for the selected period</p></div><canvas id="sf-location-chart" style="display:none"></canvas>';
+        }
+        return;
+      }
+      if (chartArea && !document.getElementById('sf-location-chart')) {
+        chartArea.querySelector('.chart-wrap').innerHTML = '<canvas id="sf-location-chart"></canvas>';
+      }
+
+      makeChart('sf-location-chart', {
+        type: 'bar',
+        data: {
+          labels: byLoc.map(r => sfLocationLabel(r.location)),
+          datasets: [
+            { label: 'Male',   data: byLoc.map(r => r.male),   backgroundColor: TH_MALE,   borderRadius: 5, barPercentage: 0.6 },
+            { label: 'Female', data: byLoc.map(r => r.female), backgroundColor: TH_FEMALE, borderRadius: 5, barPercentage: 0.6 },
+          ],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { position: 'top', labels: { boxWidth: 12, font: { size: 12 } } } },
+          scales: {
+            x: { grid: { display: false }, ticks: { font: { size: 11 } } },
+            y: { beginAtZero: true, grid: { color: '#f1f5f9' }, ticks: { font: { size: 11 } }, title: { display: true, text: 'Shoppers', font: { size: 11 }, color: '#94a3b8' } },
+          },
+        },
+      });
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -1093,8 +1174,16 @@
     async function loadView() {
       if (!S.start || !S.end) return;
       loadStoreHours();
-      if (S.view === 'footfall') await loadFootfall();
-      else if (S.view === 'heatmap') await loadHeatmap();
+      if (S.view === 'footfall') {
+        await loadFootfall();
+      } else if (S.view === 'heatmap') {
+        const promptEl  = document.getElementById('heatmap-select-store-prompt');
+        const contentEl = document.getElementById('heatmap-content');
+        const storeSelected = S.store && S.store !== 'all';
+        if (promptEl)  promptEl.style.display  = storeSelected ? 'none' : '';
+        if (contentEl) contentEl.style.display = storeSelected ? '' : 'none';
+        if (storeSelected) { await loadHeatmap(); await loadShopperFlow(); }
+      }
     }
 
     checkAuth();
