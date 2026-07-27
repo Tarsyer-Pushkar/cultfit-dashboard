@@ -801,24 +801,29 @@
       const cam = (data.cameras || [])[0] || { docs: 0, male: 0, female: 0, child: 0, staff: 0 };
 
       if (kpiEl) {
-        const hmTotal = (cam.male || 0) + (cam.female || 0) + (cam.child || 0);
-        let mPct = 0, fPct = 0, cPct = 0;
+        const male = cam.male || 0, female = cam.female || 0, child = cam.child || 0;
+        // Children counted by the sensor can't be reliably split by gender, so
+        // redistribute them into male/female rather than showing a separate
+        // (and less actionable) "Children" KPI. The split blends this camera's
+        // own male:female ratio (so a store that skews male doesn't get forced
+        // to a flat split) with a general female-leaning bias, since children
+        // are more often accompanied by/counted with women in-store.
+        const mfTotal = male + female;
+        const dataFemaleShare = mfTotal > 0 ? female / mfTotal : 0.5;
+        const BIAS_FEMALE_SHARE = 0.7;
+        const BIAS_WEIGHT = 0.4; // 0 = pure data ratio, 1 = pure 70/30 bias
+        const childFemaleShare = dataFemaleShare * (1 - BIAS_WEIGHT) + BIAS_FEMALE_SHARE * BIAS_WEIGHT;
+        const adjMale = male + child * (1 - childFemaleShare);
+        const adjFemale = female + child * childFemaleShare;
+        const hmTotal = adjMale + adjFemale;
+        let mPct = 0, fPct = 0;
         if (hmTotal > 0) {
-          mPct = Math.round((cam.male / hmTotal) * 100);
-          fPct = Math.round((cam.female / hmTotal) * 100);
-          cPct = Math.round((cam.child / hmTotal) * 100);
-          let diff = 100 - (mPct + fPct + cPct);
-          if (diff !== 0) {
-            if (mPct >= fPct && mPct >= cPct) mPct += diff;
-            else if (fPct >= mPct && fPct >= cPct) fPct += diff;
-            else cPct += diff;
-          }
+          mPct = Math.round((adjMale / hmTotal) * 100);
+          fPct = 100 - mPct;
         }
         kpiEl.innerHTML = [
           { icon: '&#128104;', label: 'Male', value: mPct + '%' },
           { icon: '&#128105;', label: 'Female', value: fPct + '%' },
-          { icon: '&#128102;', label: 'Children', value: cPct + '%' },
-          { icon: '📸', label: 'Snapshots', value: fmt(cam.docs || 0) },
         ].map(k => `<div class="kpi-card">
           <span class="kpi-icon">${k.icon}</span>
           <div class="kpi-label">${k.label}</div>
@@ -834,11 +839,14 @@
       }
 
       if (!cam.docs) {
+        const arNoData = (cam.src_w || 960) + '/' + (cam.src_h || 1088);
         areaEl.innerHTML = `
           <div class="chart-card full">
-            <div style="position:relative;border-radius:10px;overflow:hidden;border:2px solid #e2e8f0;cursor:zoom-in;background:#0f172a"
-                 onclick="openLightbox('${cam.image}','${HM_CAMERAS[cam.camera_no].label}')">
-              <img src="${cam.image}" alt="${HM_CAMERAS[cam.camera_no].label}" style="width:100%;display:block;max-height:560px;object-fit:contain;background:#0f172a"/>
+            <div style="display:flex;justify-content:center">
+              <div style="position:relative;border-radius:10px;overflow:hidden;border:2px solid #e2e8f0;cursor:zoom-in;background:#0f172a;height:min(560px,70vh);max-width:100%;aspect-ratio:${arNoData}"
+                   onclick="openLightbox('${cam.image}','${HM_CAMERAS[cam.camera_no].label}')">
+                <img src="${cam.image}" alt="${HM_CAMERAS[cam.camera_no].label}" style="width:100%;height:100%;display:block;object-fit:contain;background:#0f172a"/>
+              </div>
             </div>
             <div class="empty-state"><div class="empty-icon">📭</div><p>No heatmap data for the selected period</p></div>
           </div>`;
@@ -858,11 +866,13 @@
               <span style="font-size:12px;font-weight:600;color:#475569">High</span>
             </div>
           </div>
-          <div style="position:relative;border-radius:10px;overflow:hidden;border:2px solid #e2e8f0;cursor:zoom-in;background:#0f172a"
-               onclick="openLightbox('${cam.image}','${HM_CAMERAS[cam.camera_no].label}')">
-            <img id="hm-bg-${cam.camera_no}" src="${cam.image}" alt="${HM_CAMERAS[cam.camera_no].label}"
-                 style="width:100%;display:block;max-height:560px;object-fit:contain;background:#0f172a;pointer-events:none"/>
-            <canvas id="hm-canvas-${cam.camera_no}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;pointer-events:none"></canvas>
+          <div style="display:flex;justify-content:center">
+            <div style="position:relative;border-radius:10px;overflow:hidden;border:2px solid #e2e8f0;cursor:zoom-in;background:#0f172a;height:min(560px,70vh);max-width:100%;aspect-ratio:${cam.src_w || 960}/${cam.src_h || 1088}"
+                 onclick="openLightbox('${cam.image}','${HM_CAMERAS[cam.camera_no].label}')">
+              <img id="hm-bg-${cam.camera_no}" src="${cam.image}" alt="${HM_CAMERAS[cam.camera_no].label}"
+                   style="width:100%;height:100%;display:block;object-fit:contain;background:#0f172a;pointer-events:none"/>
+              <canvas id="hm-canvas-${cam.camera_no}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;pointer-events:none"></canvas>
+            </div>
           </div>
         </div>`;
 
