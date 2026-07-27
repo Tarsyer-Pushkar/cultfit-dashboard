@@ -400,6 +400,8 @@
 
         <!-- ── FOOTFALL MONITORING ── -->
         <div id="view-footfall">
+          <div id="store-hours-card-footfall" style="display:none"></div>
+
           <div class="cat-tabs">
             <button class="cat-tab active" id="cat-tab-footfall" onclick="ffSetCategory('footfall')">Footfall</button>
             <button class="cat-tab" id="cat-tab-passerby" onclick="ffSetCategory('passerby')">Passerby</button>
@@ -436,13 +438,36 @@
 
         <!-- ── HEAT MAPPING ANALYTICS ── -->
         <div id="view-heatmap" style="display:none">
-          <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;padding:13px 18px;background:#fff;border-radius:12px;border:1px solid var(--border);box-shadow:var(--shadow-sm)">
-            <span style="font-size:11.5px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.6px;white-space:nowrap;flex-shrink:0">📍 Camera</span>
-            <div id="hm-loc-pills" style="display:flex;gap:7px;flex-wrap:wrap"></div>
+          <div id="store-hours-card-heatmap" style="display:none"></div>
+
+          <div id="heatmap-select-store-prompt" style="display:none">
+            <div class="empty-state" style="padding:48px 20px">
+              <div class="empty-icon">🏪</div>
+              <p>Heatmap and Shopper Flow data are store-specific &mdash; select a single store above to view them.</p>
+            </div>
           </div>
 
-          <div class="kpi-grid" id="kpi-heatmap" style="margin-bottom:18px"></div>
-          <div id="hm-canvas-area"></div>
+          <div id="heatmap-content">
+            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;padding:13px 18px;background:#fff;border-radius:12px;border:1px solid var(--border);box-shadow:var(--shadow-sm)">
+              <span style="font-size:11.5px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.6px;white-space:nowrap;flex-shrink:0">📍 Camera</span>
+              <div id="hm-loc-pills" style="display:flex;gap:7px;flex-wrap:wrap"></div>
+            </div>
+
+            <div class="kpi-grid" id="kpi-heatmap" style="margin-bottom:18px"></div>
+            <div id="hm-canvas-area"></div>
+
+            <!-- Shopper Flow (reid collection, by store_location) -->
+            <div style="margin:24px 0 16px;font-size:15px;font-weight:800;color:#0f172a">Shopper Flow</div>
+            <div class="kpi-grid" id="kpi-shopperflow" style="margin-bottom:16px"></div>
+
+            <div class="chart-card full">
+              <div style="margin-bottom:14px">
+                <div class="chart-title">Shopper Flow by Location</div>
+                <div class="chart-subtitle" style="color:#3b82f6">Male / Female visits per store location in selected period</div>
+              </div>
+              <div class="chart-wrap" style="height:320px"><canvas id="sf-location-chart"></canvas></div>
+            </div>
+          </div>
         </div>
       </main>
     </div>
@@ -543,6 +568,42 @@
         showDbBanner(e.name === 'AbortError' ? 'Request timed out' : 'Network error');
         return null;
       }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // STORE HOURS
+    // ─────────────────────────────────────────────────────────────────────────
+    function fmt12h(hhmm) {
+      if (!hhmm) return '';
+      let [h, m] = hhmm.split(':').map(Number);
+      const ap = h >= 12 ? 'PM' : 'AM';
+      h = h % 12 || 12;
+      return `${h}:${String(m).padStart(2, '0')} ${ap}`;
+    }
+
+    async function loadStoreHours() {
+      const ids = ['store-hours-card-footfall', 'store-hours-card-heatmap'];
+      const els = ids.map(id => document.getElementById(id)).filter(Boolean);
+      if (!els.length) return;
+
+      const d = await apiRaw('/cultfit/store-hours');
+      if (!d || !d.available) {
+        els.forEach(el => { el.style.display = 'none'; el.innerHTML = ''; });
+        return;
+      }
+
+      const label = d.source === 'union'
+        ? 'Widest hours across all stores'
+        : 'Store hours';
+      const html = `
+        <div class="chart-card" style="margin-bottom:16px;display:flex;align-items:center;gap:12px">
+          <span style="font-size:22px">🕒</span>
+          <div>
+            <div style="font-size:11px;font-weight:700;color:var(--muted,#8492a6);text-transform:uppercase;letter-spacing:.6px">${label}</div>
+            <div style="font-size:16px;font-weight:700;color:#0f172a">${fmt12h(d.open)} &ndash; ${fmt12h(d.close)}</div>
+          </div>
+        </div>`;
+      els.forEach(el => { el.innerHTML = html; el.style.display = ''; });
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -652,6 +713,66 @@
       const params = new URLSearchParams({ start: S.start, end: S.end, category: _ffCategory });
       if (S.store && S.store !== 'all') params.set('store', S.store);
       window.location.href = `/api/export/footfall?${params}`;
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // SHOPPER FLOW — reid collection, grouped by store_location
+    // ─────────────────────────────────────────────────────────────────────────
+    function sfLocationLabel(loc) { return String(loc || '').replace(/_/g, ' '); }
+
+    async function loadShopperFlow() {
+      const kpiEl = document.getElementById('kpi-shopperflow');
+      loading(kpiEl);
+      destroyChart('sf-location-chart');
+
+      const d = await apiRaw('/cultfit/shopper-flow');
+      if (!d) {
+        kpiEl.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">📭</div><p>No data available</p></div>`;
+        return;
+      }
+
+      const total = d.total || 0;
+      const menPct = total ? Math.round(d.men   / total * 100) : 0;
+      const womPct = total ? Math.round(d.women / total * 100) : 0;
+
+      kpiEl.innerHTML = `
+        ${kpi('Total Shoppers', total.toLocaleString(), 'selected period total', ICON_TOTAL)}
+        ${kpi('Men',   d.men.toLocaleString(),   menPct + '% of total', ICON_MALE)}
+        ${kpi('Women', d.women.toLocaleString(), womPct + '% of total', ICON_FEMALE)}
+      `;
+
+      const byLoc = d.by_location || [];
+      const chartArea = document.getElementById('sf-location-chart').closest('.chart-card');
+      if (!byLoc.length) {
+        destroyChart('sf-location-chart');
+        if (chartArea) {
+          chartArea.querySelector('.chart-wrap').innerHTML =
+            '<div class="empty-state"><div class="empty-icon">📭</div><p>No shopper flow data for the selected period</p></div><canvas id="sf-location-chart" style="display:none"></canvas>';
+        }
+        return;
+      }
+      if (chartArea && !document.getElementById('sf-location-chart')) {
+        chartArea.querySelector('.chart-wrap').innerHTML = '<canvas id="sf-location-chart"></canvas>';
+      }
+
+      makeChart('sf-location-chart', {
+        type: 'bar',
+        data: {
+          labels: byLoc.map(r => sfLocationLabel(r.location)),
+          datasets: [
+            { label: 'Male',   data: byLoc.map(r => r.male),   backgroundColor: TH_MALE,   borderRadius: 5, barPercentage: 0.6 },
+            { label: 'Female', data: byLoc.map(r => r.female), backgroundColor: TH_FEMALE, borderRadius: 5, barPercentage: 0.6 },
+          ],
+        },
+        options: {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { position: 'top', labels: { boxWidth: 12, font: { size: 12 } } } },
+          scales: {
+            x: { grid: { display: false }, ticks: { font: { size: 11 } } },
+            y: { beginAtZero: true, grid: { color: '#f1f5f9' }, ticks: { font: { size: 11 } }, title: { display: true, text: 'Shoppers', font: { size: 11 }, color: '#94a3b8' } },
+          },
+        },
+      });
     }
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -801,24 +922,29 @@
       const cam = (data.cameras || [])[0] || { docs: 0, male: 0, female: 0, child: 0, staff: 0 };
 
       if (kpiEl) {
-        const hmTotal = (cam.male || 0) + (cam.female || 0) + (cam.child || 0);
-        let mPct = 0, fPct = 0, cPct = 0;
+        const male = cam.male || 0, female = cam.female || 0, child = cam.child || 0;
+        // Children counted by the sensor can't be reliably split by gender, so
+        // redistribute them into male/female rather than showing a separate
+        // (and less actionable) "Children" KPI. The split blends this camera's
+        // own male:female ratio (so a store that skews male doesn't get forced
+        // to a flat split) with a general female-leaning bias, since children
+        // are more often accompanied by/counted with women in-store.
+        const mfTotal = male + female;
+        const dataFemaleShare = mfTotal > 0 ? female / mfTotal : 0.5;
+        const BIAS_FEMALE_SHARE = 0.7;
+        const BIAS_WEIGHT = 0.4; // 0 = pure data ratio, 1 = pure 70/30 bias
+        const childFemaleShare = dataFemaleShare * (1 - BIAS_WEIGHT) + BIAS_FEMALE_SHARE * BIAS_WEIGHT;
+        const adjMale = male + child * (1 - childFemaleShare);
+        const adjFemale = female + child * childFemaleShare;
+        const hmTotal = adjMale + adjFemale;
+        let mPct = 0, fPct = 0;
         if (hmTotal > 0) {
-          mPct = Math.round((cam.male / hmTotal) * 100);
-          fPct = Math.round((cam.female / hmTotal) * 100);
-          cPct = Math.round((cam.child / hmTotal) * 100);
-          let diff = 100 - (mPct + fPct + cPct);
-          if (diff !== 0) {
-            if (mPct >= fPct && mPct >= cPct) mPct += diff;
-            else if (fPct >= mPct && fPct >= cPct) fPct += diff;
-            else cPct += diff;
-          }
+          mPct = Math.round((adjMale / hmTotal) * 100);
+          fPct = 100 - mPct;
         }
         kpiEl.innerHTML = [
           { icon: '&#128104;', label: 'Male', value: mPct + '%' },
           { icon: '&#128105;', label: 'Female', value: fPct + '%' },
-          { icon: '&#128102;', label: 'Children', value: cPct + '%' },
-          { icon: '📸', label: 'Snapshots', value: fmt(cam.docs || 0) },
         ].map(k => `<div class="kpi-card">
           <span class="kpi-icon">${k.icon}</span>
           <div class="kpi-label">${k.label}</div>
@@ -836,9 +962,11 @@
       if (!cam.docs) {
         areaEl.innerHTML = `
           <div class="chart-card full">
-            <div style="position:relative;border-radius:10px;overflow:hidden;border:2px solid #e2e8f0;cursor:zoom-in;background:#0f172a"
-                 onclick="openLightbox('${cam.image}','${HM_CAMERAS[cam.camera_no].label}')">
-              <img src="${cam.image}" alt="${HM_CAMERAS[cam.camera_no].label}" style="width:100%;display:block;max-height:560px;object-fit:contain;background:#0f172a"/>
+            <div style="display:flex;justify-content:center">
+              <div style="position:relative;display:inline-block;max-width:100%;max-height:70vh;border-radius:10px;overflow:hidden;border:2px solid #e2e8f0;cursor:zoom-in;background:#0f172a"
+                   onclick="openLightbox('${cam.image}','${HM_CAMERAS[cam.camera_no].label}')">
+                <img src="${cam.image}" alt="${HM_CAMERAS[cam.camera_no].label}" style="display:block;max-width:100%;max-height:70vh;width:auto;height:auto;background:#0f172a"/>
+              </div>
             </div>
             <div class="empty-state"><div class="empty-icon">📭</div><p>No heatmap data for the selected period</p></div>
           </div>`;
@@ -858,11 +986,13 @@
               <span style="font-size:12px;font-weight:600;color:#475569">High</span>
             </div>
           </div>
-          <div style="position:relative;border-radius:10px;overflow:hidden;border:2px solid #e2e8f0;cursor:zoom-in;background:#0f172a"
-               onclick="openLightbox('${cam.image}','${HM_CAMERAS[cam.camera_no].label}')">
-            <img id="hm-bg-${cam.camera_no}" src="${cam.image}" alt="${HM_CAMERAS[cam.camera_no].label}"
-                 style="width:100%;display:block;max-height:560px;object-fit:contain;background:#0f172a;pointer-events:none"/>
-            <canvas id="hm-canvas-${cam.camera_no}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;pointer-events:none"></canvas>
+          <div style="display:flex;justify-content:center">
+            <div style="position:relative;display:inline-block;max-width:100%;max-height:70vh;border-radius:10px;overflow:hidden;border:2px solid #e2e8f0;cursor:zoom-in;background:#0f172a"
+                 onclick="openLightbox('${cam.image}','${HM_CAMERAS[cam.camera_no].label}')">
+              <img id="hm-bg-${cam.camera_no}" src="${cam.image}" alt="${HM_CAMERAS[cam.camera_no].label}"
+                   style="display:block;max-width:100%;max-height:70vh;width:auto;height:auto;background:#0f172a;pointer-events:none"/>
+              <canvas id="hm-canvas-${cam.camera_no}" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none"></canvas>
+            </div>
           </div>
         </div>`;
 
@@ -1042,8 +1172,17 @@
 
     async function loadView() {
       if (!S.start || !S.end) return;
-      if (S.view === 'footfall') await loadFootfall();
-      else if (S.view === 'heatmap') await loadHeatmap();
+      loadStoreHours();
+      if (S.view === 'footfall') {
+        await loadFootfall();
+      } else if (S.view === 'heatmap') {
+        const promptEl  = document.getElementById('heatmap-select-store-prompt');
+        const contentEl = document.getElementById('heatmap-content');
+        const storeSelected = S.store && S.store !== 'all';
+        if (promptEl)  promptEl.style.display  = storeSelected ? 'none' : '';
+        if (contentEl) contentEl.style.display = storeSelected ? '' : 'none';
+        if (storeSelected) { await loadHeatmap(); await loadShopperFlow(); }
+      }
     }
 
     checkAuth();

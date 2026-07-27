@@ -2,7 +2,7 @@ from flask import Flask, jsonify, request, session, send_from_directory, Respons
 from flask_cors import CORS
 from datetime import datetime, timedelta
 from functools import wraps
-import os, csv, io, time
+import os, csv, io, time, json
 import bcrypt
 from dotenv import load_dotenv
 import pymongo
@@ -125,7 +125,7 @@ def me():
     return jsonify({'logged_in': False})
 
 # ─── Stores ──────────────────────────────────────────────────────────────────
-_CF_STORES_FALLBACK = ['Cultfit-Mantri-Mall']
+_CF_STORES_FALLBACK = ['Cultfit-Mantri-Mall', 'Cultfit-HSR']
 
 def _fetch_stores():
     db = _get_db()
@@ -142,6 +142,63 @@ def _fetch_stores():
 @require_login
 def cf_stores():
     return jsonify(_fetch_stores())
+
+# ─── Store opening/closing hours ───────────────────────────────────────────────
+# store_hours.json: { "<store_code>": { "open": "HH:MM", "close": "HH:MM" } }
+_STORE_HOURS_FILE = os.path.join(os.path.dirname(__file__), 'store_hours.json')
+
+def _load_store_hours():
+    try:
+        with open(_STORE_HOURS_FILE, 'r') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+def _hours_bracket(store):
+    """Returns (open_str, close_str, source) for a store code, or ('all' -> union
+    of earliest open / latest close across every store in store_hours.json)."""
+    hours = _load_store_hours()
+    if not hours:
+        return None
+    if store and store in hours:
+        entry = hours[store]
+        return entry.get('open'), entry.get('close'), 'store'
+
+    # No specific store selected (or store not in file) -> widest bracket:
+    # earliest open time and latest close time across all known stores.
+    opens  = [e.get('open')  for e in hours.values() if e.get('open')]
+    closes = [e.get('close') for e in hours.values() if e.get('close')]
+    if not opens or not closes:
+        return None
+    return min(opens), max(closes), 'union'
+
+@app.route('/api/cultfit/store-hours')
+@require_login
+def cf_store_hours():
+    store = request.args.get('store', '')
+    store = '' if store in ('all', 'All', '') else store
+    bracket = _hours_bracket(store)
+    if not bracket:
+        return jsonify({'available': False})
+    open_str, close_str, source = bracket
+    return jsonify({'available': True, 'open': open_str, 'close': close_str, 'source': source})
+
+def _hour_set_for_bracket(open_str, close_str):
+    """Expands an HH:MM-HH:MM bracket into the set of included hour buckets (0-23),
+    rounding a partial closing hour up so it's still shown. Handles overnight wrap
+    (e.g. open 22:00, close 02:00)."""
+    try:
+        open_h  = int(open_str.split(':')[0])
+        close_h, close_m = close_str.split(':')
+        close_h = int(close_h) + (1 if int(close_m) > 0 else 0)
+    except Exception:
+        return None
+    if open_h == close_h:
+        return None  # can't determine a meaningful bracket
+    if open_h < close_h:
+        return set(range(open_h, min(close_h, 24)))
+    return set(range(open_h, 24)) | set(range(0, close_h % 24))
 
 # ─── Shared date-range parsing ────────────────────────────────────────────────
 def _parse_range():
@@ -244,6 +301,15 @@ def cf_footfall():
             {'hour': f"{r['_id']}:00", 'male': r['male'], 'female': r['female'], 'total': r['male'] + r['female']}
             for r in collection.aggregate(hourly_pipeline)
         ]
+
+        # Restrict hourly rows to the selected store's opening/closing bracket
+        # (or the widest open/close span across all stores when 'All Stores' is
+        # selected). Daily/by-store totals are left unfiltered.
+        bracket = _hours_bracket(store)
+        if bracket:
+            allowed_hours = _hour_set_for_bracket(bracket[0], bracket[1])
+            if allowed_hours is not None:
+                hourly = [r for r in hourly if int(r['hour'][:2]) in allowed_hours]
 
         # Daily aggregation
         daily_pipeline = [
@@ -427,7 +493,7 @@ def cf_heatmap():
                               int(cnt.get('child', 0)) + int(cnt.get('staff', 0)))
 
             for gender, boxes in bboxes.items():
-                if not isinstance(boxes, list):
+                if gender == 'staff' or not isinstance(boxes, list):
                     continue
                 for box in boxes[:20]:
                     if isinstance(box, (list, tuple)) and len(box) == 4:
@@ -473,6 +539,69 @@ def cf_heatmap():
     except Exception as exc:
         import traceback; traceback.print_exc()
         print(f"[DB] Heatmap query error: {exc}")
+        return jsonify({'error': 'Database query failed', 'detail': str(exc)}), 503
+
+# ─── Shopper Flow (reid collection — by store_location) ───────────────────────
+# gender.male/female/child/staff are each arrays of person track IDs, so the
+# "count" is their array length. gender.child's length is folded into male
+# (same rule as the 'footfall' category); gender.staff is ignored entirely.
+@app.route('/api/cultfit/shopper-flow')
+@require_login
+def cf_shopper_flow():
+    start_dt, end_dt, end_dt_inclusive, store = _parse_range()
+
+    db = _get_db()
+    if db is None:
+        return jsonify({'total': 0, 'men': 0, 'women': 0, 'by_location': [], 'db_connected': False})
+
+    try:
+        collection = db['reid']
+
+        match_filter = {
+            'project_name': PROJECT_NAME,
+            'date_time': {
+                '$gte': start_dt.strftime('%Y-%m-%d %H:%M:%S'),
+                '$lt':  end_dt_inclusive.strftime('%Y-%m-%d %H:%M:%S'),
+            }
+        }
+        if store:
+            match_filter['store_code'] = store
+
+        pipeline = [
+            {'$match': match_filter},
+            {'$addFields': {
+                'male_v': {'$add': [
+                    {'$size': {'$ifNull': ['$gender.male',  []]}},
+                    {'$size': {'$ifNull': ['$gender.child', []]}},
+                ]},
+                'female_v': {'$size': {'$ifNull': ['$gender.female', []]}},
+            }},
+            {'$group': {
+                '_id':    {'$ifNull': ['$store_location', 'Unknown']},
+                'male':   {'$sum': '$male_v'},
+                'female': {'$sum': '$female_v'},
+            }},
+            {'$addFields': {'total': {'$add': ['$male', '$female']}}},
+            {'$sort': {'total': -1}},
+        ]
+        by_location = [
+            {'location': r['_id'], 'male': r['male'], 'female': r['female'], 'total': r['total']}
+            for r in collection.aggregate(pipeline)
+        ]
+
+        total_male   = sum(r['male']   for r in by_location)
+        total_female = sum(r['female'] for r in by_location)
+
+        return jsonify({
+            'total':        total_male + total_female,
+            'men':          total_male,
+            'women':        total_female,
+            'by_location':  by_location,
+            'db_connected': True,
+        })
+
+    except Exception as exc:
+        print(f"[DB] Shopper flow query error: {exc}")
         return jsonify({'error': 'Database query failed', 'detail': str(exc)}), 503
 
 # ─── Static / SPA ─────────────────────────────────────────────────────────────
