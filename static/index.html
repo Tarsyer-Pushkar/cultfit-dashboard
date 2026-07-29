@@ -448,11 +448,6 @@
           </div>
 
           <div id="heatmap-content">
-            <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:16px;padding:13px 18px;background:#fff;border-radius:12px;border:1px solid var(--border);box-shadow:var(--shadow-sm)">
-              <span style="font-size:11.5px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.6px;white-space:nowrap;flex-shrink:0">📍 Camera</span>
-              <div id="hm-loc-pills" style="display:flex;gap:7px;flex-wrap:wrap"></div>
-            </div>
-
             <div class="kpi-grid" id="kpi-heatmap" style="margin-bottom:18px"></div>
             <div id="hm-canvas-area"></div>
 
@@ -778,15 +773,6 @@
     // ─────────────────────────────────────────────────────────────────────────
     // HEATMAP — real MongoDB data + canvas overlay
     // ─────────────────────────────────────────────────────────────────────────
-    const HM_CAMERAS = { 1: { label: 'Camera 1' }, 2: { label: 'Camera 2' } };
-    const HM_CAM_ORDER = [1, 2];
-    if (window._hmCam === undefined) window._hmCam = '1';
-
-    function hmSelectCam(cam) {
-      window._hmCam = String(cam);
-      loadHeatmap();
-    }
-
     function _hmRamp() {
       const ramp = new Array(256);
       for (let v = 0; v < 256; v++) {
@@ -883,34 +869,19 @@
     let _hmDataCache = {};
 
     async function loadHeatmap() {
-      const kpiEl   = document.getElementById('kpi-heatmap');
-      const areaEl  = document.getElementById('hm-canvas-area');
-      const pillsEl = document.getElementById('hm-loc-pills');
+      const kpiEl  = document.getElementById('kpi-heatmap');
+      const areaEl = document.getElementById('hm-canvas-area');
 
-      const selCam = window._hmCam || String(HM_CAM_ORDER[0]);
-      const cacheKey = `${S.start}_${S.end}_${S.store || 'all'}_${selCam}`;
+      const cacheKey = `${S.start}_${S.end}_${S.store || 'all'}`;
 
       if (kpiEl)  kpiEl.innerHTML = '';
       if (areaEl) areaEl.innerHTML = '<div class="loading-overlay" style="min-height:300px;display:flex;align-items:center;justify-content:center"><span class="spinner"></span> &nbsp; Loading heatmap data...</div>';
 
       let data = _hmDataCache[cacheKey];
       if (!data) {
-        const params = { start: S.start, end: S.end, store: S.store || 'all', camera: selCam };
+        const params = { start: S.start, end: S.end, store: S.store || 'all' };
         data = await apiRaw('/cultfit/heatmap', params);
         _hmDataCache[cacheKey] = data;
-      }
-
-      if (pillsEl) {
-        pillsEl.innerHTML = HM_CAM_ORDER.map(c => {
-          const isActive = selCam === String(c);
-          return `<button onclick="hmSelectCam('${c}')"
-            style="padding:5px 13px;border-radius:20px;font-size:12px;font-weight:600;cursor:pointer;
-              white-space:nowrap;transition:all .15s;font-family:inherit;
-              border:1.5px solid ${isActive ? 'var(--primary)' : '#e2e8f0'};
-              background:${isActive ? 'var(--primary)' : '#f8fafc'};
-              color:${isActive ? '#fff' : '#475569'}">
-            ${HM_CAMERAS[c].label}</button>`;
-        }).join('');
       }
 
       if (!data) {
@@ -919,10 +890,10 @@
         return;
       }
 
-      const cam = (data.cameras || [])[0] || { docs: 0, male: 0, female: 0, child: 0, staff: 0 };
+      const cameras = data.cameras || [];
 
       if (kpiEl) {
-        const male = cam.male || 0, female = cam.female || 0, child = cam.child || 0;
+        const male = data.male || 0, female = data.female || 0, child = data.child || 0;
         // Children counted by the sensor can't be reliably split by gender, so
         // redistribute them into male/female rather than showing a separate
         // (and less actionable) "Children" KPI. The split blends this camera's
@@ -954,38 +925,17 @@
 
       if (!areaEl) return;
 
-      if (!cam.image) {
-        areaEl.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><p>No base image available for this camera (nvr_monitoring, stream_type=sub)</p></div>';
+      if (!cameras.length) {
+        areaEl.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><p>No heatmap data for the selected period</p></div>';
         return;
       }
 
-      if (!cam.docs) {
-        const arNoData = (cam.src_w || 960) + '/' + (cam.src_h || 1088);
-        areaEl.innerHTML = `
-          <div class="chart-card full">
-            <div style="display:flex;justify-content:center">
-<<<<<<< HEAD
-              <div style="position:relative;display:inline-block;max-width:100%;max-height:70vh;border-radius:10px;overflow:hidden;border:2px solid #e2e8f0;cursor:zoom-in;background:#0f172a"
-                   onclick="openLightbox('${cam.image}','${HM_CAMERAS[cam.camera_no].label}')">
-                <img src="${cam.image}" alt="${HM_CAMERAS[cam.camera_no].label}" style="display:block;max-width:100%;max-height:70vh;width:auto;height:auto;background:#0f172a"/>
-=======
-              <div style="position:relative;border-radius:10px;overflow:hidden;border:2px solid #e2e8f0;cursor:zoom-in;background:#0f172a;height:min(560px,70vh);max-width:100%;aspect-ratio:${arNoData}"
-                   onclick="openLightbox('${cam.image}','${HM_CAMERAS[cam.camera_no].label}')">
-                <img src="${cam.image}" alt="${HM_CAMERAS[cam.camera_no].label}" style="width:100%;height:100%;display:block;object-fit:contain;background:#0f172a"/>
->>>>>>> e9a109ed7d6e1c7ee7235b8d6552f9d34688f06b
-              </div>
-            </div>
-            <div class="empty-state"><div class="empty-icon">📭</div><p>No heatmap data for the selected period</p></div>
-          </div>`;
-        return;
-      }
-
-      areaEl.innerHTML = `
-        <div class="chart-card full">
+      areaEl.innerHTML = cameras.map(cam => `
+        <div class="chart-card full" style="margin-bottom:18px">
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px">
             <div>
               <div style="font-size:17px;font-weight:800;color:#0f172a;margin-bottom:3px">Store Heatmap — Customer Movement Pattern</div>
-              <div style="font-size:12.5px;color:#64748b">${HM_CAMERAS[cam.camera_no].label} &nbsp;·&nbsp; ${cam.docs} snapshots</div>
+              <div style="font-size:12.5px;color:#64748b">${cam.label} &nbsp;·&nbsp; ${cam.docs} snapshots</div>
             </div>
             <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
               <span style="font-size:12px;font-weight:600;color:#475569">Low</span>
@@ -994,24 +944,16 @@
             </div>
           </div>
           <div style="display:flex;justify-content:center">
-<<<<<<< HEAD
-            <div style="position:relative;display:inline-block;max-width:100%;max-height:70vh;border-radius:10px;overflow:hidden;border:2px solid #e2e8f0;cursor:zoom-in;background:#0f172a"
-                 onclick="openLightbox('${cam.image}','${HM_CAMERAS[cam.camera_no].label}')">
-              <img id="hm-bg-${cam.camera_no}" src="${cam.image}" alt="${HM_CAMERAS[cam.camera_no].label}"
-                   style="display:block;max-width:100%;max-height:70vh;width:auto;height:auto;background:#0f172a;pointer-events:none"/>
-              <canvas id="hm-canvas-${cam.camera_no}" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none"></canvas>
-=======
             <div style="position:relative;border-radius:10px;overflow:hidden;border:2px solid #e2e8f0;cursor:zoom-in;background:#0f172a;height:min(560px,70vh);max-width:100%;aspect-ratio:${cam.src_w || 960}/${cam.src_h || 1088}"
-                 onclick="openLightbox('${cam.image}','${HM_CAMERAS[cam.camera_no].label}')">
-              <img id="hm-bg-${cam.camera_no}" src="${cam.image}" alt="${HM_CAMERAS[cam.camera_no].label}"
+                 onclick="openLightbox('${cam.image}','${cam.label}')">
+              <img id="hm-bg-${cam.camera_no}" src="${cam.image}" alt="${cam.label}"
                    style="width:100%;height:100%;display:block;object-fit:contain;background:#0f172a;pointer-events:none"/>
               <canvas id="hm-canvas-${cam.camera_no}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;pointer-events:none"></canvas>
->>>>>>> e9a109ed7d6e1c7ee7235b8d6552f9d34688f06b
             </div>
           </div>
-        </div>`;
+        </div>`).join('');
 
-      setTimeout(() => renderCamHeatmap(cam), 0);
+      cameras.forEach(cam => setTimeout(() => renderCamHeatmap(cam), 0));
     }
 
     // ── Login ───────────────────────────────────────────────────────────────

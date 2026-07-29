@@ -416,21 +416,19 @@ def export_footfall():
     return response
 
 # ─── Heatmap ──────────────────────────────────────────────────────────────────
-# heatmap collection camera_no 1 -> base image from nvr_monitoring camera_no 2 (stream_type=main)
-# heatmap collection camera_no 2 -> base image from nvr_monitoring camera_no 4 (stream_type=main)
-# The "main" stream is captured at 960x1088, matching the resolution the heatmap
-# person_bbox_list coordinates were detected at.
+# Cameras are discovered dynamically from whatever camera_no values are present
+# in the heatmap collection (no fixed camera list, no cap). For each camera_no
+# found, the latest matching image with the SAME camera_no (stream_type=main) is
+# looked up in nvr_monitoring. A camera is only included in the response if both
+# a heatmap doc and a matching nvr_monitoring image were found. The "main" stream
+# is captured at 960x1088, matching the resolution the heatmap person_bbox_list
+# coordinates were detected at.
 HEATMAP_SRC_RESOLUTION = {'w': 960, 'h': 1088}
-_HM_TO_NVR_CAMERA = {1: 2, 2: 4}
-_HM_CAMERAS = {
-    1: {'label': 'Camera 1'},
-    2: {'label': 'Camera 2'},
-}
 
-def _latest_nvr_main_image(db, nvr_camera_no, store):
+def _latest_nvr_main_image(db, camera_no, store):
     match_filter = {
         'project_name': PROJECT_NAME,
-        'camera_no': nvr_camera_no,
+        'camera_no': camera_no,
         'stream_type': 'main',
     }
     if store:
@@ -442,14 +440,6 @@ def _latest_nvr_main_image(db, nvr_camera_no, store):
 @require_login
 def cf_heatmap():
     start_dt, end_dt, end_dt_inclusive, store = _parse_range()
-    camera_param = request.args.get('camera', '1')
-    try:
-        hm_camera_no = int(camera_param)
-    except ValueError:
-        hm_camera_no = 1
-    if hm_camera_no not in _HM_CAMERAS:
-        hm_camera_no = 1
-    nvr_camera_no = _HM_TO_NVR_CAMERA[hm_camera_no]
 
     db = _get_db()
     if db is None:
@@ -463,76 +453,93 @@ def cf_heatmap():
             background=True, name='hm_perf_idx'
         )
 
-        match_filter = {
+        base_filter = {
             'project_name': PROJECT_NAME,
-            'camera_no': hm_camera_no,
             'date_time': {
                 '$gte': start_dt.strftime('%Y-%m-%d %H:%M:%S'),
                 '$lt':  end_dt_inclusive.strftime('%Y-%m-%d %H:%M:%S'),
             }
         }
         if store:
-            match_filter['store_code'] = store
+            base_filter['store_code'] = store
 
-        docs = list(collection.find(
-            match_filter,
-            {'_id': 0, 'camera_no': 1, 'person_bbox_list': 1, 'count': 1}
-        ).limit(5000))
+        camera_nos = sorted(collection.distinct('camera_no', base_filter))
 
-        agg = {'docs': 0, 'total': 0, 'male': 0, 'female': 0, 'child': 0, 'staff': 0, 'points': []}
-        for doc in docs:
-            cnt = doc.get('count', {}) or {}
-            bboxes = doc.get('person_bbox_list', {}) or {}
+        cameras_result = []
+        totals = {'docs': 0, 'total': 0, 'male': 0, 'female': 0, 'child': 0, 'staff': 0}
 
-            agg['docs'] += 1
-            agg['male']   += int(cnt.get('male',   0))
-            agg['female'] += int(cnt.get('female', 0))
-            agg['child']  += int(cnt.get('child',  0))
-            agg['staff']  += int(cnt.get('staff',  0))
-            agg['total']  += (int(cnt.get('male', 0)) + int(cnt.get('female', 0)) +
-                              int(cnt.get('child', 0)) + int(cnt.get('staff', 0)))
+        for camera_no in camera_nos:
+            match_filter = dict(base_filter, camera_no=camera_no)
 
-            for gender, boxes in bboxes.items():
-                if gender == 'staff' or not isinstance(boxes, list):
-                    continue
-                for box in boxes[:20]:
-                    if isinstance(box, (list, tuple)) and len(box) == 4:
-                        agg['points'].append({
-                            'x1': box[0], 'y1': box[1], 'x2': box[2], 'y2': box[3],
-                            'g': gender[0] if gender else 'u',
-                        })
+            docs = list(collection.find(
+                match_filter,
+                {'_id': 0, 'camera_no': 1, 'person_bbox_list': 1, 'count': 1}
+            ).limit(5000))
+            if not docs:
+                continue
 
-        points = agg['points']
-        if len(points) > 4000:
-            import random
-            points = random.sample(points, 4000)
+            image_url = _latest_nvr_main_image(db, camera_no, store)
+            if not image_url:
+                continue
 
-        image_url = _latest_nvr_main_image(db, nvr_camera_no, store)
+            agg = {'docs': 0, 'total': 0, 'male': 0, 'female': 0, 'child': 0, 'staff': 0, 'points': []}
+            for doc in docs:
+                cnt = doc.get('count', {}) or {}
+                bboxes = doc.get('person_bbox_list', {}) or {}
 
-        camera_result = {
-            'camera_no':     hm_camera_no,
-            'nvr_camera_no': nvr_camera_no,
-            'label':         _HM_CAMERAS[hm_camera_no]['label'],
-            'image':         image_url,
-            'src_w':         HEATMAP_SRC_RESOLUTION['w'],
-            'src_h':         HEATMAP_SRC_RESOLUTION['h'],
-            'docs':          agg['docs'],
-            'total':         agg['total'],
-            'male':          agg['male'],
-            'female':        agg['female'],
-            'child':         agg['child'],
-            'staff':         agg['staff'],
-            'points':        points,
-        }
+                agg['docs'] += 1
+                agg['male']   += int(cnt.get('male',   0))
+                agg['female'] += int(cnt.get('female', 0))
+                agg['child']  += int(cnt.get('child',  0))
+                agg['staff']  += int(cnt.get('staff',  0))
+                agg['total']  += (int(cnt.get('male', 0)) + int(cnt.get('female', 0)) +
+                                  int(cnt.get('child', 0)) + int(cnt.get('staff', 0)))
+
+                for gender, boxes in bboxes.items():
+                    if gender == 'staff' or not isinstance(boxes, list):
+                        continue
+                    for box in boxes[:20]:
+                        if isinstance(box, (list, tuple)) and len(box) == 4:
+                            agg['points'].append({
+                                'x1': box[0], 'y1': box[1], 'x2': box[2], 'y2': box[3],
+                                'g': gender[0] if gender else 'u',
+                            })
+
+            points = agg['points']
+            if len(points) > 4000:
+                import random
+                points = random.sample(points, 4000)
+
+            cameras_result.append({
+                'camera_no':     camera_no,
+                'label':         f'Camera {camera_no}',
+                'image':         image_url,
+                'src_w':         HEATMAP_SRC_RESOLUTION['w'],
+                'src_h':         HEATMAP_SRC_RESOLUTION['h'],
+                'docs':          agg['docs'],
+                'total':         agg['total'],
+                'male':          agg['male'],
+                'female':        agg['female'],
+                'child':         agg['child'],
+                'staff':         agg['staff'],
+                'points':        points,
+            })
+
+            totals['docs']   += agg['docs']
+            totals['total']  += agg['total']
+            totals['male']   += agg['male']
+            totals['female'] += agg['female']
+            totals['child']  += agg['child']
+            totals['staff']  += agg['staff']
 
         return jsonify({
-            'cameras':      [camera_result],
-            'total':        agg['total'],
-            'male':         agg['male'],
-            'female':       agg['female'],
-            'child':        agg['child'],
-            'staff':        agg['staff'],
-            'docs':         agg['docs'],
+            'cameras':      cameras_result,
+            'total':        totals['total'],
+            'male':         totals['male'],
+            'female':       totals['female'],
+            'child':        totals['child'],
+            'staff':        totals['staff'],
+            'docs':         totals['docs'],
             'db_connected': True,
         })
 
