@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "cultfit-dashboard",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["app.py"],
+      "port": 21699
+    }
+  ]
+}

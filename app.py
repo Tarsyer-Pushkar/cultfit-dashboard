@@ -611,6 +611,91 @@ def cf_shopper_flow():
         print(f"[DB] Shopper flow query error: {exc}")
         return jsonify({'error': 'Database query failed', 'detail': str(exc)}), 503
 
+# ─── Gate Activity (gate_activity collection — daily open/close snapshots) ────
+# Each open/close event can be logged by more than one camera (camera_no 1/2)
+# at the same date_time, so events are bucketed by the collection's own
+# `type` field ('morning'/'evening') rather than by time-of-day — a day with
+# only an 'evening' doc (e.g. a delayed one-off close check) must not be
+# misread as that store's morning open.
+@app.route('/api/cultfit/gate-activity')
+@require_login
+def cf_gate_activity():
+    start_dt, end_dt, end_dt_inclusive, store = _parse_range()
+
+    db = _get_db()
+    if db is None:
+        return jsonify({'rows': [], 'db_connected': False})
+
+    try:
+        collection = db['gate_activity']
+        match_filter = {
+            'project_name': PROJECT_NAME,
+            'date_time': {
+                '$gte': start_dt.strftime('%Y-%m-%d %H:%M:%S'),
+                '$lt':  end_dt_inclusive.strftime('%Y-%m-%d %H:%M:%S'),
+            }
+        }
+        if store:
+            match_filter['store_code'] = store
+
+        docs = collection.find(
+            match_filter,
+            {'_id': 0, 'store_code': 1, 'date_time': 1, 'image_url': 1,
+             'type': 1, 'gate_status': 1, 'camera_no': 1}
+        ).sort([('date_time', 1), ('camera_no', 1)])
+
+        # (store, date, type) -> chosen event doc; camera_no 1 wins if a type
+        # has more than one camera's snapshot for the same event.
+        events = {}
+        for doc in docs:
+            date_time = doc.get('date_time', '')
+            if len(date_time) < 19:
+                continue
+            ev_type = doc.get('type')
+            if ev_type not in ('morning', 'evening'):
+                continue
+            key = (doc.get('store_code', 'Unknown'), date_time[:10], ev_type)
+            if key in events and events[key]['camera_no'] == 1:
+                continue
+            events[key] = {
+                'time':       date_time[11:19],
+                'image':      doc.get('image_url'),
+                'status_lbl': doc.get('gate_status') or ('open' if ev_type == 'morning' else 'close'),
+                'camera_no':  doc.get('camera_no'),
+            }
+
+        rows_by_day = {}
+        for (store_code, date_only, ev_type), ev in events.items():
+            rows_by_day.setdefault((store_code, date_only), {})[ev_type] = ev
+
+        rows = []
+        for (store_code, date_only), by_type in rows_by_day.items():
+            morning_ev = by_type.get('morning')
+            evening_ev = by_type.get('evening')
+
+            rows.append({
+                'date': date_only,
+                'store': store_code,
+                'morning': {
+                    'time':  morning_ev['time'],
+                    'image': morning_ev['image'],
+                    'label': morning_ev['status_lbl'],
+                } if morning_ev else None,
+                'evening': {
+                    'time':  evening_ev['time'],
+                    'image': evening_ev['image'],
+                    'label': evening_ev['status_lbl'],
+                } if evening_ev else None,
+            })
+
+        rows.sort(key=lambda r: (r['date'], r['store']), reverse=True)
+
+        return jsonify({'rows': rows, 'db_connected': True})
+
+    except Exception as exc:
+        print(f"[DB] Gate activity query error: {exc}")
+        return jsonify({'error': 'Database query failed', 'detail': str(exc)}), 503
+
 # ─── Static / SPA ─────────────────────────────────────────────────────────────
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')

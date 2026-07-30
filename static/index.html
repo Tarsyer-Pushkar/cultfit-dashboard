@@ -265,6 +265,18 @@
     .cat-tab { padding: 7px 20px; border: none; border-radius: 7px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background .18s, color .18s; background: transparent; color: var(--text-muted); font-family: inherit; }
     .cat-tab.active { background: var(--primary); color: #fff; box-shadow: 0 2px 8px rgba(220,38,38,.3); }
 
+    /* ── Gate Activity ── */
+    .gate-table { width:100%; border-collapse:collapse; background:#fff; }
+    .gate-table th { text-align:left; font-size:10.5px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:.6px; background:#f8fafc; padding:10px 16px; border-bottom:1px solid var(--border); }
+    .gate-table td { padding:12px 16px; border-bottom:1px solid #f1f5f9; vertical-align:middle; }
+    .gate-table tr:last-child td { border-bottom:none; }
+    .gate-table tr:hover td { background:#f8fafc; }
+    .gate-store-chip { display:inline-block; padding:3px 10px; background:#eff6ff; color:#2563eb; border:1px solid #bfdbfe; border-radius:6px; font-size:12px; font-weight:700; }
+    .gate-cell { display:flex; align-items:center; gap:10px; }
+    .gate-thumb { width:44px; height:56px; border-radius:6px; object-fit:cover; background:#e2e8f0; cursor:zoom-in; flex-shrink:0; border:1px solid var(--border); }
+    .gate-time-sub { font-size:12.5px; color:var(--text); font-weight:600; }
+    .gate-type-sub { font-size:11px; color:var(--text-muted); margin-top:2px; text-transform:capitalize; }
+
     /* ── Heatmap ── */
     #lightbox { display: none; position: fixed; inset: 0; z-index: 10000; background: rgba(0, 0, 0, .88); align-items: center; justify-content: center; padding: 20px; }
     #lightbox.open { display: flex; }
@@ -366,6 +378,9 @@
         <button class="nav-item" data-view="heatmap" data-label="Heat Mapping Analytics">
           <span class="icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/><line x1="2" y1="12" x2="22" y2="12"/></svg></span><span class="nav-label">Heatmap</span>
         </button>
+        <button class="nav-item" data-view="gate" data-label="Gate Activity">
+          <span class="icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"/><circle cx="14" cy="12" r="1"/></svg></span><span class="nav-label">Gate Activity</span>
+        </button>
       </nav>
 
       <main class="content" id="main-content">
@@ -461,6 +476,26 @@
                 <div class="chart-subtitle" style="color:#3b82f6">Male / Female visits per store location in selected period</div>
               </div>
               <div class="chart-wrap" style="height:320px"><canvas id="sf-location-chart"></canvas></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ── GATE ACTIVITY ── -->
+        <div id="view-gate" style="display:none">
+          <div id="store-hours-card-gate" style="display:none"></div>
+
+          <div class="chart-card full" style="padding:0;overflow:hidden">
+            <div style="padding:16px 18px 0">
+              <div class="chart-title">Gate Activity</div>
+              <div class="chart-subtitle">Morning open &amp; evening close per store, with on-time status</div>
+            </div>
+            <div style="overflow-x:auto;margin-top:14px">
+              <table class="gate-table" id="gate-table">
+                <thead>
+                  <tr><th>Date</th><th>Store</th><th>Morning (Open)</th><th>Evening (Close)</th></tr>
+                </thead>
+                <tbody id="gate-tbody"></tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -577,7 +612,7 @@
     }
 
     async function loadStoreHours() {
-      const ids = ['store-hours-card-footfall', 'store-hours-card-heatmap'];
+      const ids = ['store-hours-card-footfall', 'store-hours-card-heatmap', 'store-hours-card-gate'];
       const els = ids.map(id => document.getElementById(id)).filter(Boolean);
       if (!els.length) return;
 
@@ -867,6 +902,59 @@
     }
 
     let _hmDataCache = {};
+    let _hmCameras = [];
+    let _hmSelectedCam = null;
+
+    function hmSelectCamera(camNo) {
+      _hmSelectedCam = camNo;
+      hmRenderArea();
+    }
+
+    function hmRenderArea() {
+      const areaEl = document.getElementById('hm-canvas-area');
+      if (!areaEl) return;
+
+      if (!_hmCameras.length) {
+        areaEl.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><p>No heatmap data for the selected period</p></div>';
+        return;
+      }
+
+      if (_hmSelectedCam == null || !_hmCameras.some(c => c.camera_no === _hmSelectedCam)) {
+        _hmSelectedCam = _hmCameras[0].camera_no;
+      }
+      const cam = _hmCameras.find(c => c.camera_no === _hmSelectedCam);
+
+      const tabsHtml = _hmCameras.length > 1
+        ? `<div class="cat-tabs" style="margin-bottom:16px">
+            ${_hmCameras.map(c => `<button class="cat-tab ${c.camera_no === _hmSelectedCam ? 'active' : ''}" onclick="hmSelectCamera(${c.camera_no})">${c.label}</button>`).join('')}
+          </div>`
+        : '';
+
+      areaEl.innerHTML = tabsHtml + `
+        <div class="chart-card full" style="margin-bottom:18px">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px">
+            <div>
+              <div style="font-size:17px;font-weight:800;color:#0f172a;margin-bottom:3px">Store Heatmap — Customer Movement Pattern</div>
+              <div style="font-size:12.5px;color:#64748b">${cam.label} &nbsp;·&nbsp; ${cam.docs} snapshots</div>
+            </div>
+            <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+              <span style="font-size:12px;font-weight:600;color:#475569">Low</span>
+              <div style="width:130px;height:12px;border-radius:6px;background:linear-gradient(to right,#14a040,#facc15,#f97316,#dc2626);box-shadow:0 1px 4px rgba(0,0,0,.1)"></div>
+              <span style="font-size:12px;font-weight:600;color:#475569">High</span>
+            </div>
+          </div>
+          <div style="display:flex;justify-content:center">
+            <div style="position:relative;border-radius:10px;overflow:hidden;border:2px solid #e2e8f0;cursor:zoom-in;background:#0f172a;height:min(560px,70vh);max-width:100%;aspect-ratio:${cam.src_w || 960}/${cam.src_h || 1088}"
+                 onclick="openLightbox('${cam.image}','${cam.label}')">
+              <img id="hm-bg-${cam.camera_no}" src="${cam.image}" alt="${cam.label}"
+                   style="width:100%;height:100%;display:block;object-fit:contain;background:#0f172a;pointer-events:none"/>
+              <canvas id="hm-canvas-${cam.camera_no}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;pointer-events:none"></canvas>
+            </div>
+          </div>
+        </div>`;
+
+      setTimeout(() => renderCamHeatmap(cam), 0);
+    }
 
     async function loadHeatmap() {
       const kpiEl  = document.getElementById('kpi-heatmap');
@@ -925,35 +1013,52 @@
 
       if (!areaEl) return;
 
-      if (!cameras.length) {
-        areaEl.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><p>No heatmap data for the selected period</p></div>';
+      _hmCameras = cameras;
+      hmRenderArea();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // GATE ACTIVITY — gate_activity collection, grouped per store/day
+    // ─────────────────────────────────────────────────────────────────────────
+    function fmtDateLabel(dateStr) {
+      const d = new Date(dateStr + 'T00:00:00');
+      if (isNaN(d)) return dateStr;
+      return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
+    }
+
+    function gateCellHtml(ev) {
+      if (!ev) return `<span style="color:var(--text-muted);font-size:12.5px">&mdash;</span>`;
+      const img = ev.image || '';
+      const thumb = img
+        ? `<img class="gate-thumb" src="${img}" alt="" onclick="openLightbox('${img}','${ev.time} · ${ev.label}')" />`
+        : `<div class="gate-thumb"></div>`;
+      return `
+        <div class="gate-cell">
+          ${thumb}
+          <div>
+            <div class="gate-time-sub">${ev.time}</div>
+            <div class="gate-type-sub">${ev.label}</div>
+          </div>
+        </div>`;
+    }
+
+    async function loadGateActivity() {
+      const tbody = document.getElementById('gate-tbody');
+      tbody.innerHTML = `<tr><td colspan="4"><div class="loading-overlay"><span class="spinner"></span> Loading...</div></td></tr>`;
+
+      const d = await apiRaw('/cultfit/gate-activity');
+      if (!d || !d.rows || !d.rows.length) {
+        tbody.innerHTML = `<tr><td colspan="4"><div class="empty-state"><div class="empty-icon">🚪</div><p>No gate activity for the selected period</p></div></td></tr>`;
         return;
       }
 
-      areaEl.innerHTML = cameras.map(cam => `
-        <div class="chart-card full" style="margin-bottom:18px">
-          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px">
-            <div>
-              <div style="font-size:17px;font-weight:800;color:#0f172a;margin-bottom:3px">Store Heatmap — Customer Movement Pattern</div>
-              <div style="font-size:12.5px;color:#64748b">${cam.label} &nbsp;·&nbsp; ${cam.docs} snapshots</div>
-            </div>
-            <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-              <span style="font-size:12px;font-weight:600;color:#475569">Low</span>
-              <div style="width:130px;height:12px;border-radius:6px;background:linear-gradient(to right,#14a040,#facc15,#f97316,#dc2626);box-shadow:0 1px 4px rgba(0,0,0,.1)"></div>
-              <span style="font-size:12px;font-weight:600;color:#475569">High</span>
-            </div>
-          </div>
-          <div style="display:flex;justify-content:center">
-            <div style="position:relative;border-radius:10px;overflow:hidden;border:2px solid #e2e8f0;cursor:zoom-in;background:#0f172a;height:min(560px,70vh);max-width:100%;aspect-ratio:${cam.src_w || 960}/${cam.src_h || 1088}"
-                 onclick="openLightbox('${cam.image}','${cam.label}')">
-              <img id="hm-bg-${cam.camera_no}" src="${cam.image}" alt="${cam.label}"
-                   style="width:100%;height:100%;display:block;object-fit:contain;background:#0f172a;pointer-events:none"/>
-              <canvas id="hm-canvas-${cam.camera_no}" style="position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;pointer-events:none"></canvas>
-            </div>
-          </div>
-        </div>`).join('');
-
-      cameras.forEach(cam => setTimeout(() => renderCamHeatmap(cam), 0));
+      tbody.innerHTML = d.rows.map(r => `
+        <tr>
+          <td style="font-size:12.5px;font-weight:600;white-space:nowrap;color:var(--text)">${fmtDateLabel(r.date)}</td>
+          <td><span class="gate-store-chip">${r.store}</span></td>
+          <td>${gateCellHtml(r.morning)}</td>
+          <td>${gateCellHtml(r.evening)}</td>
+        </tr>`).join('');
     }
 
     // ── Login ───────────────────────────────────────────────────────────────
@@ -1139,6 +1244,8 @@
         if (promptEl)  promptEl.style.display  = storeSelected ? 'none' : '';
         if (contentEl) contentEl.style.display = storeSelected ? '' : 'none';
         if (storeSelected) { await loadHeatmap(); await loadShopperFlow(); }
+      } else if (S.view === 'gate') {
+        await loadGateActivity();
       }
     }
 
