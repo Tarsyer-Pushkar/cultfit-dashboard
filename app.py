@@ -418,18 +418,25 @@ def export_footfall():
 # ─── Heatmap ──────────────────────────────────────────────────────────────────
 # Cameras are discovered dynamically from whatever camera_no values are present
 # in the heatmap collection (no fixed camera list, no cap). For each camera_no
-# found, the latest matching image with the SAME camera_no (stream_type=main) is
-# looked up in nvr_monitoring. A camera is only included in the response if both
-# a heatmap doc and a matching nvr_monitoring image were found. The "main" stream
-# is captured at 960x1088, matching the resolution the heatmap person_bbox_list
-# coordinates were detected at.
-HEATMAP_SRC_RESOLUTION = {'w': 960, 'h': 1088}
+# found, the latest matching image with the SAME camera_no is looked up in
+# nvr_monitoring. A camera is only included in the response if both a heatmap
+# doc and a matching nvr_monitoring image were found.
+#
+# Cultfit-HSR's gate/heatmap capture now runs off the substream (960x576)
+# instead of the main stream (1920x1080), so its background snapshot must come
+# from stream_type='sub' — every other store still uses 'main'. The frontend
+# doesn't assume any fixed resolution; it plots bbox coordinates unscaled
+# against the actual displayed image's native size, so as long as the image
+# fetched here matches the resolution the bboxes for that store were detected
+# at, there's nothing else to keep in sync.
+HEATMAP_SUBSTREAM_STORES = {'Cultfit-HSR'}
 
-def _latest_nvr_main_image(db, camera_no, store):
+def _latest_nvr_image(db, camera_no, store):
+    stream_type = 'sub' if store in HEATMAP_SUBSTREAM_STORES else 'main'
     match_filter = {
         'project_name': PROJECT_NAME,
         'camera_no': camera_no,
-        'stream_type': 'main',
+        'stream_type': stream_type,
     }
     if store:
         match_filter['store_code'] = store
@@ -478,7 +485,7 @@ def cf_heatmap():
             if not docs:
                 continue
 
-            image_url = _latest_nvr_main_image(db, camera_no, store)
+            image_url = _latest_nvr_image(db, camera_no, store)
             if not image_url:
                 continue
 
@@ -514,8 +521,6 @@ def cf_heatmap():
                 'camera_no':     camera_no,
                 'label':         f'Camera {camera_no}',
                 'image':         image_url,
-                'src_w':         HEATMAP_SRC_RESOLUTION['w'],
-                'src_h':         HEATMAP_SRC_RESOLUTION['h'],
                 'docs':          agg['docs'],
                 'total':         agg['total'],
                 'male':          agg['male'],
