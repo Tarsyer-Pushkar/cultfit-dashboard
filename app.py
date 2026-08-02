@@ -553,10 +553,34 @@ def cf_heatmap():
         print(f"[DB] Heatmap query error: {exc}")
         return jsonify({'error': 'Database query failed', 'detail': str(exc)}), 503
 
-# ─── Shopper Flow (reid collection — by store_location) ───────────────────────
-# gender.male/female/child/staff are each arrays of person track IDs, so the
-# "count" is their array length. gender.child's length is folded into male
-# (same rule as the 'footfall' category); gender.staff is ignored entirely.
+# ─── Shopper Flow (reid collection — movement trails) ─────────────────────────
+# reid's `gender` dict maps gender -> list of track IDs present in that doc.
+# `person_bbox_list` is a FLAT dict keyed by track ID (not nested per gender,
+# not positionally paired) -> a list of that track's boxes seen within that
+# one doc, already in chronological order. A trail is built by resolving each
+# track ID's gender from the `gender` lists, then concatenating its boxes
+# across every doc in the selected range for one camera, ordered by
+# (doc date_time, in-doc box order). Children are folded into the 'male'
+# track group (same rule used elsewhere); staff are ignored (never appear in
+# the male/female/child lists, so their boxes have no resolvable gender and
+# are skipped). Trails are capped to the longest SHOPPERFLOW_MAX_TRAILS (most
+# points seen) to keep the overlay readable.
+#
+# reid track IDs are store-wide, not per-camera: the same ID recurs across
+# different camera_no values as one physical shopper walks between camera
+# fields of view. A lightweight pre-pass over ALL cameras (not just the one
+# currently being processed) finds which track IDs crossed 2+ distinct
+# cameras and ranks them; those get a stable 'j' color-palette index in every
+# camera's trail output, so the SAME shopper reads as the SAME color on every
+# camera image they appear in. Everyone else keeps 'j': null and falls back
+# to the plain male/female coloring on the frontend.
+SHOPPERFLOW_MAX_TRAILS = 200
+SHOPPERFLOW_MAX_JOURNEY_COLORS = 12
+
+STORE_CAMERA_LAYOUTS = {
+    'Cultfit-HSR': [5, 7, 2, 4, 3],
+}
+
 @app.route('/api/cultfit/shopper-flow')
 @require_login
 def cf_shopper_flow():
@@ -564,12 +588,12 @@ def cf_shopper_flow():
 
     db = _get_db()
     if db is None:
-        return jsonify({'total': 0, 'men': 0, 'women': 0, 'by_location': [], 'db_connected': False})
+        return jsonify({'cameras': [], 'db_connected': False})
 
     try:
         collection = db['reid']
 
-        match_filter = {
+        base_filter = {
             'project_name': PROJECT_NAME,
             'date_time': {
                 '$gte': start_dt.strftime('%Y-%m-%d %H:%M:%S'),
@@ -577,42 +601,182 @@ def cf_shopper_flow():
             }
         }
         if store:
-            match_filter['store_code'] = store
+            base_filter['store_code'] = store
 
-        pipeline = [
-            {'$match': match_filter},
-            {'$addFields': {
-                'male_v': {'$add': [
-                    {'$size': {'$ifNull': ['$gender.male',  []]}},
-                    {'$size': {'$ifNull': ['$gender.child', []]}},
-                ]},
-                'female_v': {'$size': {'$ifNull': ['$gender.female', []]}},
-            }},
-            {'$group': {
-                '_id':    {'$ifNull': ['$store_location', 'Unknown']},
-                'male':   {'$sum': '$male_v'},
-                'female': {'$sum': '$female_v'},
-            }},
-            {'$addFields': {'total': {'$add': ['$male', '$female']}}},
-            {'$sort': {'total': -1}},
-        ]
-        by_location = [
-            {'location': r['_id'], 'male': r['male'], 'female': r['female'], 'total': r['total']}
-            for r in collection.aggregate(pipeline)
+        # Determine target camera layout order based on selected store
+        requested_store = store or ''
+        target_layout = None
+        for s_code, layout in STORE_CAMERA_LAYOUTS.items():
+            if s_code.lower() in requested_store.lower():
+                target_layout = layout
+                break
+
+        # Cross-camera pass: retrieve camera sightings and timestamps per track ID
+        cross_cam_docs = list(collection.find(
+            base_filter,
+            {'_id': 0, 'camera_no': 1, 'gender': 1, 'date_time': 1}
+        ).limit(8000))
+
+        tid_cameras   = {}
+        tid_sightings = {}
+        tid_timeline  = {}
+
+        for doc in cross_cam_docs:
+            camera_no = doc.get('camera_no')
+            dt_str    = doc.get('date_time') or ''
+            gender    = doc.get('gender') or {}
+            ids       = set()
+            for key in ('male', 'child', 'female'):
+                ids.update(str(t) for t in (gender.get(key) or []))
+            for tid in ids:
+                tid_cameras.setdefault(tid, set()).add(camera_no)
+                tid_sightings[tid] = tid_sightings.get(tid, 0) + 1
+                if dt_str and camera_no is not None:
+                    tid_timeline.setdefault(tid, []).append((dt_str, camera_no))
+
+        multi_cam = [(tid, len(cams), tid_sightings[tid]) for tid, cams in tid_cameras.items() if len(cams) >= 2]
+        multi_cam.sort(key=lambda t: (t[1], t[2]), reverse=True)
+        journey_color_index = {tid: i for i, (tid, _, _) in enumerate(multi_cam[:SHOPPERFLOW_MAX_JOURNEY_COLORS])}
+
+        # Calculate transitions and top journey paths across cameras
+        transition_counts = {}
+        top_journeys = []
+        tid_journeys = {}
+
+        for tid, len_cams, sightings in multi_cam[:SHOPPERFLOW_MAX_JOURNEY_COLORS]:
+            timeline = tid_timeline.get(tid, [])
+            timeline.sort(key=lambda x: x[0])
+            cam_path = []
+            for _, cam in timeline:
+                if not cam_path or cam_path[-1] != cam:
+                    cam_path.append(cam)
+            if len(cam_path) >= 2:
+                top_journeys.append({
+                    'tid':  tid,
+                    'j':    journey_color_index.get(tid),
+                    'path': cam_path
+                })
+                tid_journeys[tid] = cam_path
+                for i in range(len(cam_path) - 1):
+                    pair = (cam_path[i], cam_path[i + 1])
+                    transition_counts[pair] = transition_counts.get(pair, 0) + 1
+
+        formatted_transitions = [
+            {'from': f_cam, 'to': t_cam, 'count': cnt}
+            for (f_cam, t_cam), cnt in sorted(transition_counts.items(), key=lambda x: x[1], reverse=True)
         ]
 
-        total_male   = sum(r['male']   for r in by_location)
-        total_female = sum(r['female'] for r in by_location)
+        db_cams = collection.distinct('camera_no', base_filter)
+        if target_layout:
+            def sort_key(c):
+                try:
+                    c_num = int(str(c).replace('camera_', '').replace('Camera ', '').strip())
+                except ValueError:
+                    c_num = c
+                if c_num in target_layout:
+                    return (0, target_layout.index(c_num))
+                elif str(c) in [str(x) for x in target_layout]:
+                    return (0, [str(x) for x in target_layout].index(str(c)))
+                else:
+                    return (1, str(c))
+            camera_nos = sorted(db_cams, key=sort_key)
+            layout_order_out = target_layout
+        else:
+            def std_sort_key(c):
+                try:
+                    return (0, int(str(c).replace('camera_', '').replace('Camera ', '').strip()))
+                except ValueError:
+                    return (1, str(c))
+            camera_nos = sorted(db_cams, key=std_sort_key)
+            layout_order_out = [c for c in camera_nos]
+
+        cameras_result = []
+
+        for camera_no in camera_nos:
+            match_filter = dict(base_filter, camera_no=camera_no)
+
+            docs = list(collection.find(
+                match_filter,
+                {'_id': 0, 'date_time': 1, 'gender': 1, 'person_bbox_list': 1}
+            ).sort('date_time', 1).limit(5000))
+            if not docs:
+                continue
+
+            image_url = _latest_nvr_image(db, camera_no, store)
+            if not image_url:
+                continue
+
+            trails = []
+            for doc in docs:
+                gender = doc.get('gender') or {}
+                bboxes = doc.get('person_bbox_list') or {}
+                if not isinstance(bboxes, dict):
+                    continue
+
+                id_group = {}
+                for tid in (gender.get('male') or []):
+                    id_group[str(tid)] = 'male'
+                for tid in (gender.get('child') or []):
+                    id_group[str(tid)] = 'male'
+                for tid in (gender.get('female') or []):
+                    id_group[str(tid)] = 'female'
+
+                for tid, boxes in bboxes.items():
+                    group = id_group.get(str(tid))
+                    if group is None or not isinstance(boxes, list):
+                        continue
+                    pts = []
+                    for box in boxes:
+                        if isinstance(box, (list, tuple)) and len(box) == 4:
+                            pts.append({'x': (box[0] + box[2]) / 2, 'y': (box[1] + box[3]) / 2})
+                    if len(pts) < 2:
+                        continue
+
+                    tid_str  = str(tid)
+                    j_idx    = journey_color_index.get(tid_str)
+                    prev_cam = None
+                    next_cam = None
+                    if j_idx is not None and tid_str in tid_journeys:
+                        path = tid_journeys[tid_str]
+                        if camera_no in path:
+                            idx = path.index(camera_no)
+                            if idx > 0:
+                                prev_cam = path[idx - 1]
+                            if idx < len(path) - 1:
+                                next_cam = path[idx + 1]
+
+                    trails.append({
+                        'id':       tid_str,
+                        'g':        'm' if group == 'male' else 'f',
+                        'j':        j_idx,
+                        'prev_cam': prev_cam,
+                        'next_cam': next_cam,
+                        'points':   pts,
+                    })
+
+            trail_count = len(trails)
+            trails.sort(key=lambda t: len(t['points']), reverse=True)
+            trails = trails[:SHOPPERFLOW_MAX_TRAILS]
+
+            cameras_result.append({
+                'camera_no':   camera_no,
+                'label':       f'Camera {camera_no}',
+                'image':       image_url,
+                'docs':        len(docs),
+                'trail_count': trail_count,
+                'trails':      trails,
+            })
 
         return jsonify({
-            'total':        total_male + total_female,
-            'men':          total_male,
-            'women':        total_female,
-            'by_location':  by_location,
+            'cameras':      cameras_result,
+            'layout_order': layout_order_out,
+            'transitions':  formatted_transitions,
+            'journeys':     top_journeys,
             'db_connected': True,
         })
 
     except Exception as exc:
+        import traceback; traceback.print_exc()
         print(f"[DB] Shopper flow query error: {exc}")
         return jsonify({'error': 'Database query failed', 'detail': str(exc)}), 503
 
