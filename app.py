@@ -53,6 +53,43 @@ def _get_db():
         _mongo_db = None
     return _mongo_db
 
+# ─── GCS signed URLs ───────────────────────────────────────────────────────────
+_gcs_client = None
+_GCS_PREFIX = "https://storage.googleapis.com/"
+
+def _init_gcs():
+    global _gcs_client
+    key_path = os.environ.get('GCS_KEY_PATH') or os.environ.get('GCS_KEY') or \
+        os.path.join(os.path.dirname(__file__), 'gcs-key.json')
+    if os.path.exists(key_path):
+        try:
+            from google.cloud import storage
+            _gcs_client = storage.Client.from_service_account_json(key_path)
+            print(f"[GCS] client initialised from {key_path}", flush=True)
+        except Exception as e:
+            print(f"[GCS] ERROR initialising client: {e}", flush=True)
+    else:
+        print(f"[GCS] key file not found at {key_path}", flush=True)
+
+_init_gcs()
+
+def signed_url(raw_url: str, expires_minutes: int = 15) -> str:
+    if not raw_url or not raw_url.startswith(_GCS_PREFIX) or _gcs_client is None:
+        return raw_url
+    path = raw_url[len(_GCS_PREFIX):]
+    bucket_name, _, blob_name = path.partition("/")
+    bucket = _gcs_client.bucket(bucket_name)
+    blob = bucket.blob(blob_name)
+    try:
+        return blob.generate_signed_url(
+            version="v4",
+            expiration=timedelta(minutes=expires_minutes),
+            method="GET",
+        )
+    except Exception as e:
+        print(f"[GCS] ERROR signing URL: {e}", flush=True)
+        return raw_url
+
 PROJECT_NAME = 'Cultfit'
 
 # ─── Auth ─────────────────────────────────────────────────────────────────────
@@ -441,7 +478,7 @@ def _latest_nvr_image(db, camera_no, store):
     if store:
         match_filter['store_code'] = store
     doc = db['nvr_monitoring'].find_one(match_filter, sort=[('date_time', -1)])
-    return doc.get('image_url') if doc else None
+    return signed_url(doc.get('image_url')) if doc else None
 
 @app.route('/api/cultfit/heatmap')
 @require_login
@@ -828,7 +865,7 @@ def cf_gate_activity():
                 continue
             events[key] = {
                 'time':       date_time[11:19],
-                'image':      doc.get('image_url'),
+                'image':      signed_url(doc.get('image_url')),
                 'status_lbl': doc.get('gate_status') or ('open' if ev_type == 'morning' else 'close'),
                 'camera_no':  doc.get('camera_no'),
             }
