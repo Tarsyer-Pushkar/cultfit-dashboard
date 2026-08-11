@@ -615,7 +615,14 @@ def cf_heatmap():
 # between the two, so both `transitions` and `top_journeys` only ever
 # contain physically continuous, nearby-zone-to-nearby-zone hops. "Entry"
 # (the store's single physical entrance/exit) is prepended as the first
-# waypoint and is only adjacent to the zone(s) in the entrance's section.
+# waypoint; which zone(s) it's adjacent to is derived from the entrance's
+# pixel position vs. each zone's polygon (same proximity rule used for
+# zone-to-zone adjacency) rather than by matching section names, since an
+# entrance doesn't always sit inside a single named section (e.g. Cultfit-
+# Mantri-Mall's entrance sits on the boundary between two sections and is
+# adjacent to a zone in each). Any `store_location` value seen in the raw
+# reid data that isn't one of the zones defined in the store's floor plan
+# JSON is dropped entirely — not guessed at, not partially shown.
 SHOPPERFLOW_MAX_JOURNEYS = 10
 ZONE_ADJACENCY_GAP_PX = 60   # max polygon edge-to-edge gap (px) to count two zones as neighbors
 
@@ -623,7 +630,7 @@ _FLOOR_PLAN_DIR = os.path.join(os.path.dirname(__file__), 'static', 'floor_plans
 _zone_geometry_cache = {}
 
 def _load_zone_geometry(store):
-    """Zone bounding boxes + which zones sit in the entrance's section, read from
+    """Zone bounding boxes + the entrance's pixel position, read from
     static/floor_plans/<store>.json. Returns None if that file doesn't exist."""
     if store in _zone_geometry_cache:
         return _zone_geometry_cache[store]
@@ -635,7 +642,7 @@ def _load_zone_geometry(store):
             with open(path, encoding='utf-8') as f:
                 data = json.load(f)
             fp = data.get('floor_plan', {})
-            entrance_section = (fp.get('entrance') or {}).get('section')
+            entrance_position = (fp.get('entrance') or {}).get('position')
 
             zones = {}
             for section in fp.get('sections', []):
@@ -648,11 +655,9 @@ def _load_zone_geometry(store):
                     zones[z['zone_id']] = {
                         'x0': min(xs), 'x1': max(xs),
                         'y0': min(ys), 'y1': max(ys),
-                        'section': section.get('section'),
                     }
 
-            entrance_zones = [zid for zid, info in zones.items() if info['section'] == entrance_section]
-            geometry = {'zones': zones, 'entrance_zones': entrance_zones}
+            geometry = {'zones': zones, 'entrance_position': entrance_position}
         except Exception as exc:
             print(f"[FloorPlan] Failed to load geometry for {store}: {exc}")
             geometry = None
@@ -680,9 +685,17 @@ def _build_zone_adjacency(store):
     zones = geometry['zones']
     adjacency = {zid: set() for zid in zones}
     adjacency['Entry'] = set()
-    for zid in geometry['entrance_zones']:
-        adjacency['Entry'].add(zid)
-        adjacency[zid].add('Entry')
+
+    entrance_position = geometry.get('entrance_position')
+    if entrance_position:
+        entrance_pt = {
+            'x0': entrance_position['x'], 'x1': entrance_position['x'],
+            'y0': entrance_position['y'], 'y1': entrance_position['y'],
+        }
+        for zid, rect in zones.items():
+            if _rect_gap(entrance_pt, rect) <= ZONE_ADJACENCY_GAP_PX:
+                adjacency['Entry'].add(zid)
+                adjacency[zid].add('Entry')
 
     zids = list(zones.keys())
     for i in range(len(zids)):
@@ -757,6 +770,13 @@ def cf_shopper_flow():
         if store:
             match_filter['store_code'] = store
 
+        # Zones not defined in this store's floor plan (e.g. a camera/section
+        # not yet mapped) are dropped entirely, not guessed at or partially
+        # shown — known_zones stays None (no filtering) if there's no floor
+        # plan for this store at all.
+        geometry = _load_zone_geometry(store) if store else None
+        known_zones = set(geometry['zones'].keys()) if geometry else None
+
         # No server-side sort here — each person's timeline is re-sorted by
         # date_time locally below, so an (expensive, potentially unindexed)
         # whole-collection sort on the DB side isn't needed.
@@ -772,6 +792,8 @@ def cf_shopper_flow():
         for doc in docs:
             zone = doc.get('store_location')
             if not zone:
+                continue
+            if known_zones is not None and zone not in known_zones:
                 continue
             dt_str = doc.get('date_time') or ''
             gender = doc.get('gender') or {}

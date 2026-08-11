@@ -1,0 +1,58 @@
+{
+  "store_code": "Cultfit-Mantri-Mall",
+  "device_serial_id": "e43470e81d91ab3d",
+  "floor_plan": {
+    "shape": "Straight two-section store (no turn)",
+    "canvas": {
+      "width": 950,
+      "height": 520,
+      "units": "px",
+      "note": "Schematic top-down layout derived from camera-view zone annotations. Not to physical scale."
+    },
+    "camera_sequence": ["camera_2", "camera_4"],
+    "camera_sequence_note": "Source JSON's top-level camera_sequence array only listed 'camera_2', but the cameras array includes both camera_2 (Section_1) and camera_4 (Section_2). Defaulted flow order to camera_2 -> camera_4 based on section numbering - confirm this is correct.",
+    "entrance": {
+      "section": "boundary between Section_1 and Section_2",
+      "wall": "south",
+      "position": { "x": 460, "y": 400 },
+      "note": "Entrance opens at the bottom wall, centered between the two sections. Zone_1 (camera_2) is to the left of the entrance, Zone_2 (camera_4) is to the right."
+    },
+    "sections": [
+      {
+        "section": "Section_1",
+        "camera_id": "camera_2",
+        "sequence_order": 1,
+        "bounds": { "x": 60, "y": 100, "width": 400, "height": 300 },
+        "camera_marker": { "x": 430, "y": 140 },
+        "connects_to": { "next_section": "Section_2", "direction": "east" },
+        "zones": [
+          {
+            "zone_id": "Zone_1",
+            "polygon": [[80, 120], [440, 120], [440, 380], [80, 380]]
+          }
+        ]
+      },
+      {
+        "section": "Section_2",
+        "camera_id": "camera_4",
+        "sequence_order": 2,
+        "bounds": { "x": 460, "y": 100, "width": 400, "height": 300 },
+        "camera_marker": { "x": 830, "y": 140 },
+        "connects_to": { "prev_section": "Section_1", "direction": "east (end of flow)" },
+        "zones": [
+          {
+            "zone_id": "Zone_2",
+            "polygon": [[480, 120], [840, 120], [840, 380], [480, 380]]
+          }
+        ]
+      }
+    ],
+    "camera_flow_edges": [
+      { "from": "camera_2", "to": "camera_4", "direction": "straight_east" }
+    ],
+    "zone_to_camera_map": {
+      "Zone_1": "camera_2",
+      "Zone_2": "camera_4"
+    }
+  }
+}

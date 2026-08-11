@@ -444,14 +444,6 @@
             </div>
             <div class="chart-wrap" style="height:320px"><canvas id="ff-main-chart"></canvas></div>
           </div>
-
-          <div class="chart-card full">
-            <div style="margin-bottom:14px">
-              <div class="chart-title">Store Comparison</div>
-              <div class="chart-subtitle" style="color:#3b82f6">Total footfall per store in selected period</div>
-            </div>
-            <div class="chart-wrap" style="height:260px"><canvas id="ff-store-chart"></canvas></div>
-          </div>
         </div>
 
         <!-- ── HEAT MAPPING ANALYTICS ── -->
@@ -522,7 +514,6 @@
     const TH_TOTAL = '#EF4444'; const TH_TOTAL_BG = 'rgba(239, 68, 68, 0.1)';
     const TH_MALE = '#3B82F6'; const TH_MALE_BG = 'rgba(59, 130, 246, 0.1)';
     const TH_FEMALE = '#10B981'; const TH_FEMALE_BG = 'rgba(16, 185, 129, 0.1)';
-    const TH_BAD_BAR = 'rgba(239, 68, 68, 0.85)';
 
     const ICON_MALE = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${TH_MALE}" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
     const ICON_FEMALE = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${TH_FEMALE}" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
@@ -700,7 +691,6 @@
     async function loadFootfall() {
       loading(document.getElementById('kpi-footfall'));
       destroyChart('ff-main-chart');
-      destroyChart('ff-store-chart');
 
       const d = await apiRaw('/cultfit/footfall', { category: _ffCategory });
       if (!d) {
@@ -721,28 +711,6 @@
       `;
 
       ffRenderMainChart(d);
-
-      const byStore = d.by_store || [];
-      if (!byStore.length) {
-        destroyChart('ff-store-chart');
-      } else {
-        makeChart('ff-store-chart', {
-          type: 'bar',
-          data: {
-            labels: byStore.map(r => r.store),
-            datasets: [{ label: 'Total ' + catLabel, data: byStore.map(r => r.total), backgroundColor: TH_BAD_BAR, borderRadius: 6, barPercentage: 0.55 }],
-          },
-          options: {
-            indexAxis: 'y',
-            responsive: true, maintainAspectRatio: false,
-            plugins: { legend: { position: 'top', labels: { boxWidth: 12, font: { size: 12 } } } },
-            scales: {
-              x: { beginAtZero: true, grid: { color: '#f1f5f9' }, ticks: { font: { size: 11 } }, title: { display: true, text: 'Visitors', font: { size: 11 }, color: '#94a3b8' } },
-              y: { grid: { display: false }, ticks: { font: { size: 12 } } },
-            },
-          },
-        });
-      }
     }
 
     function handleExport() {
