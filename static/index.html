@@ -960,373 +960,191 @@
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // SHOPPER FLOW — reid collection, per-track movement trails on base image
+    // SHOPPER FLOW — reid collection, floor-plan 2D map (zone traffic + flow)
     // ─────────────────────────────────────────────────────────────────────────
-    function sfStrokePath(ctx, pts) {
-      ctx.beginPath();
-      ctx.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
-      ctx.stroke();
-    }
-
-    let _sfAnimHandle = null;
-    function sfStopAnim() {
-      if (_sfAnimHandle != null) {
-        cancelAnimationFrame(_sfAnimHandle);
-        _sfAnimHandle = null;
-      }
-    }
-
-    // Shoppers tracked across 2+ cameras that day (trail.j is an index into
-    // this) each get their own hue, so the SAME color threading through
-    // Camera 2's image and Camera 7's image reads as "this is one person" —
-    // everyone else (single-camera sightings) stays in the plain gender
-    // colors, faint, as backdrop.
-    const SF_JOURNEY_PALETTE = ['#2563eb', '#db2777', '#059669', '#d97706', '#7c3aed', '#0891b2', '#dc2626', '#65a30d', '#c026d3', '#0d9488', '#4f46e5', '#ea580c'];
-
-    function renderCamTrails(cam) {
-      sfStopAnim();
-      const imgEl  = document.getElementById(`sf-bg-${cam.camera_no}`);
-      const baseEl = document.getElementById(`sf-canvas-${cam.camera_no}`);
-      const animEl = document.getElementById(`sf-anim-${cam.camera_no}`);
-      if (!imgEl || !baseEl || !animEl) return;
-
-      const doRender = () => {
-        const srcW = imgEl.naturalWidth;
-        const srcH = imgEl.naturalHeight;
-        if (!srcW || !srcH) return;
-
-        baseEl.width = animEl.width = srcW;
-        baseEl.height = animEl.height = srcH;
-
-        const baseCtx = baseEl.getContext('2d');
-        baseCtx.clearRect(0, 0, srcW, srcH);
-        const animCtx = animEl.getContext('2d');
-        animCtx.clearRect(0, 0, srcW, srcH);
-
-        const trails = (cam.trails || []).filter(t => t.points && t.points.length >= 2);
-        if (!trails.length) return;
-
-        const major = trails.filter(t => t.j != null);
-        const minor = trails.filter(t => t.j == null);
-
-        const colorOf = (trail) => trail.j != null
-          ? SF_JOURNEY_PALETTE[trail.j % SF_JOURNEY_PALETTE.length]
-          : '#38bdf8';
-
-        baseCtx.lineCap  = 'round';
-        baseCtx.lineJoin = 'round';
-        const thinW   = Math.max(1, srcW / 640);
-        const majorW  = Math.max(2.5, srcW / 380);
-        const endR    = Math.max(3.5, srcW / 220);
-
-        // Single-camera movement trails (rendered in Single Camera Focus View)
-        if (_sfViewMode === 'single') {
-          baseCtx.globalAlpha = 0.45;
-          baseCtx.lineWidth = thinW;
-          for (const trail of minor) {
-            baseCtx.strokeStyle = colorOf(trail);
-            sfStrokePath(baseCtx, trail.points);
-          }
-        }
-
-        // Solid base line for major (multi-camera) trails
-        baseCtx.globalAlpha = 0.65;
-        baseCtx.lineWidth = majorW;
-        for (const trail of major) {
-          baseCtx.strokeStyle = colorOf(trail);
-          sfStrokePath(baseCtx, trail.points);
-        }
-
-        // End markers for major trails
-        for (const trail of major) {
-          const pts = trail.points;
-          const color = colorOf(trail);
-          baseCtx.fillStyle = color;
-          baseCtx.globalAlpha = 0.9;
-          baseCtx.beginPath();
-          baseCtx.arc(pts[pts.length - 1].x, pts[pts.length - 1].y, endR, 0, Math.PI * 2);
-          baseCtx.fill();
-          baseCtx.globalAlpha = 0.5;
-          baseCtx.lineWidth = 1.5;
-          baseCtx.strokeStyle = color;
-          baseCtx.beginPath();
-          baseCtx.arc(pts[0].x, pts[0].y, endR * 0.65, 0, Math.PI * 2);
-          baseCtx.stroke();
-        }
-        baseCtx.globalAlpha = 1;
-
-        if (!major.length) return;
-
-        // Marching-dash overlay animates major trails
-        const dashLen = Math.max(6, srcW / 90);
-        const gapLen  = dashLen * 0.8;
-        const speed   = 0.045;
-        let offset = 0;
-        let lastT  = null;
-
-        const step = (t) => {
-          if (lastT == null) lastT = t;
-          offset -= (t - lastT) * speed;
-          lastT = t;
-
-          animCtx.clearRect(0, 0, srcW, srcH);
-          animCtx.lineCap  = 'round';
-          animCtx.lineJoin = 'round';
-          animCtx.setLineDash([dashLen, gapLen]);
-          animCtx.lineDashOffset = offset;
-          animCtx.lineWidth = majorW;
-          animCtx.globalAlpha = 0.85;
-          for (const trail of major) {
-            animCtx.strokeStyle = colorOf(trail);
-            sfStrokePath(animCtx, trail.points);
-          }
-          animCtx.setLineDash([]);
-
-          _sfAnimHandle = requestAnimationFrame(step);
-        };
-        _sfAnimHandle = requestAnimationFrame(step);
-      };
-
-      if (imgEl.complete && imgEl.naturalWidth > 0) doRender();
-      else imgEl.addEventListener('load', doRender);
-    }
-
     let _sfDataCache = {};
-    let _sfCameras = [];
-    let _sfTransitions = [];
-    let _sfJourneys = [];
-    let _sfLayoutOrder = [];
-    let _sfSelectedCam = null;
-    let _sfViewMode = 'continuity'; // 'continuity' or 'single'
+    let _sfSvgCache = {};   // store code -> svg markup string, or false if not found
+    let _sfData = null;
 
-    function sfSetViewMode(mode) {
-      _sfViewMode = mode;
-      sfRenderArea();
+    function sfHeatColor(ratio) {
+      const v = Math.max(0, Math.min(255, Math.round(ratio * 255)));
+      const col = _HM_RAMP[v] || [0, 0, 0, 0];
+      return `rgba(${col[0]},${col[1]},${col[2]},${(col[3] / 255 * 0.85).toFixed(2)})`;
     }
 
-    function sfSelectCamera(camNo) {
-      _sfSelectedCam = camNo;
-      if (_sfViewMode === 'continuity') {
-        const el = document.getElementById(`sf-card-${camNo}`);
-        if (el) el.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
-      } else {
-        sfRenderArea();
-      }
-    }
+    function sfApplyHeatmap(wrapEl, zoneTraffic) {
+      const counts = Object.values(zoneTraffic);
+      const maxCount = counts.length ? Math.max(...counts) : 0;
 
-    // Function to draw coordinate-to-coordinate flow curves stretching to bottom of images
-    function sfRenderCoordinateBridges() {
-      const svgEl = document.getElementById('sf-global-svg');
-      const wrapEl = document.getElementById('sf-continuity-wrap');
-      if (!svgEl || !wrapEl || !_sfJourneys || !_sfJourneys.length) return;
-
-      const wrapRect = wrapEl.getBoundingClientRect();
-      const totalW = wrapEl.scrollWidth;
-      const totalH = wrapEl.scrollHeight;
-
-      svgEl.setAttribute('width', totalW);
-      svgEl.setAttribute('height', totalH);
-      svgEl.setAttribute('viewBox', `0 0 ${totalW} ${totalH}`);
-
-      const strVal = (val) => String(val != null ? val : '');
-      let svgContent = '';
-
-      // Create defs for journey color gradients
-      let defsHtml = '<defs>';
-      SF_JOURNEY_PALETTE.forEach((c, idx) => {
-        defsHtml += `
-          <linearGradient id="sf-grad-${idx}" x1="0%" y1="0%" x2="100%" y2="100%">
-            <stop offset="0%" stop-color="${c}"/>
-            <stop offset="100%" stop-color="${SF_JOURNEY_PALETTE[(idx + 1) % SF_JOURNEY_PALETTE.length]}"/>
-          </linearGradient>`;
-      });
-      defsHtml += '</defs>';
-      svgContent += defsHtml;
-
-      for (const jObj of _sfJourneys) {
-        const tid = strVal(jObj.tid);
-        const jIdx = jObj.j != null ? jObj.j : 0;
-        const color = SF_JOURNEY_PALETTE[jIdx % SF_JOURNEY_PALETTE.length];
-        const path = jObj.path || [];
-        if (path.length < 2) continue;
-
-        for (let i = 0; i < path.length - 1; i++) {
-          const cam1No = path[i];
-          const cam2No = path[i + 1];
-
-          const cam1Obj = _sfCameras.find(c => c.camera_no === cam1No);
-          const cam2Obj = _sfCameras.find(c => c.camera_no === cam2No);
-          if (!cam1Obj || !cam2Obj) continue;
-
-          const img1El = document.getElementById(`sf-bg-${cam1No}`);
-          const img2El = document.getElementById(`sf-bg-${cam2No}`);
-          if (!img1El || !img2El) continue;
-
-          const trail1 = (cam1Obj.trails || []).find(t => strVal(t.id) === tid);
-          const trail2 = (cam2Obj.trails || []).find(t => strVal(t.id) === tid);
-
-          const pts1 = trail1 && trail1.points ? trail1.points : [];
-          const pts2 = trail2 && trail2.points ? trail2.points : [];
-
-          if (!pts1.length || !pts2.length) continue;
-
-          const pt1 = pts1[pts1.length - 1]; // Exit point in Cam 1
-          const pt2 = pts2[0];               // Entry point in Cam 2
-
-          const r1 = img1El.getBoundingClientRect();
-          const r2 = img2El.getBoundingClientRect();
-
-          const natW1 = img1El.naturalWidth || r1.width;
-          const natH1 = img1El.naturalHeight || r1.height;
-          const natW2 = img2El.naturalWidth || r2.width;
-          const natH2 = img2El.naturalHeight || r2.height;
-
-          // Convert intrinsic image points to absolute coordinates in wrapEl
-          const x1 = (r1.left - wrapRect.left) + wrapEl.scrollLeft + (pt1.x / natW1) * r1.width;
-          const y1 = (r1.top - wrapRect.top) + wrapEl.scrollTop + (pt1.y / natH1) * r1.height;
-
-          const x2 = (r2.left - wrapRect.left) + wrapEl.scrollLeft + (pt2.x / natW2) * r2.width;
-          const y2 = (r2.top - wrapRect.top) + wrapEl.scrollTop + (pt2.y / natH2) * r2.height;
-
-          const botY1 = (r1.bottom - wrapRect.top) + wrapEl.scrollTop;
-          const botY2 = (r2.bottom - wrapRect.top) + wrapEl.scrollTop;
-          const arcBottomY = Math.max(botY1, botY2) + 26;
-
-          // Smooth Bezier path stretching down to bottom of image container and connecting x1,y1 to x2,y2
-          const pathD = `M ${x1.toFixed(1)},${y1.toFixed(1)} ` +
-                        `C ${x1.toFixed(1)},${arcBottomY.toFixed(1)} ` +
-                        `${x2.toFixed(1)},${arcBottomY.toFixed(1)} ` +
-                        `${x2.toFixed(1)},${y2.toFixed(1)}`;
-
-          svgContent += `
-            <path d="${pathD}" fill="none" stroke="${color}" stroke-width="3.5" stroke-linecap="round" opacity="0.88" />
-            <path d="${pathD}" fill="none" stroke="#ffffff" stroke-width="1.8" stroke-linecap="round" stroke-dasharray="7,5" opacity="0.95">
-              <animate attributeName="stroke-dashoffset" from="24" to="0" dur="1.3s" repeatCount="indefinite" />
-            </path>
-            <circle cx="${x1.toFixed(1)}" cy="${y1.toFixed(1)}" r="4.5" fill="${color}" stroke="#ffffff" stroke-width="2" />
-            <circle cx="${x2.toFixed(1)}" cy="${y2.toFixed(1)}" r="4.5" fill="${color}" stroke="#ffffff" stroke-width="2" />`;
+      wrapEl.querySelectorAll('.zone-poly').forEach(poly => {
+        const zone = poly.getAttribute('data-zone');
+        const count = zoneTraffic[zone] || 0;
+        const ratio = maxCount > 0 ? count / maxCount : 0;
+        if (count > 0) {
+          poly.style.fill = sfHeatColor(ratio);
+          poly.style.fillOpacity = 1;
         }
-      }
+      });
 
-      svgEl.innerHTML = svgContent;
+      wrapEl.querySelectorAll('.zone-label').forEach(label => {
+        const zone = label.getAttribute('data-zone');
+        const count = zoneTraffic[zone] || 0;
+        const x = label.getAttribute('x');
+        const y = parseFloat(label.getAttribute('y'));
+        const countTspan = document.createElementNS('http://www.w3.org/2000/svg', 'tspan');
+        countTspan.setAttribute('x', x);
+        countTspan.setAttribute('y', y + 18);
+        countTspan.setAttribute('font-size', '13');
+        countTspan.setAttribute('font-weight', '600');
+        countTspan.textContent = `${count} visitor${count === 1 ? '' : 's'}`;
+        label.appendChild(countTspan);
+      });
     }
 
-    function sfRenderArea() {
-      sfStopAnim();
-      const areaEl = document.getElementById('sf-canvas-area');
-      if (!areaEl) return;
+    function sfZoneAnchor(wrapEl, zone) {
+      if (zone === 'Entry') {
+        const el = wrapEl.querySelector('#entrance-anchor');
+        if (!el) return null;
+        return { x: parseFloat(el.getAttribute('data-x')), y: parseFloat(el.getAttribute('data-y')) };
+      }
+      const label = wrapEl.querySelector(`.zone-label[data-zone="${zone}"]`);
+      if (!label) return null;
+      return { x: parseFloat(label.getAttribute('x')), y: parseFloat(label.getAttribute('y')) };
+    }
 
-      if (!_sfCameras.length) {
-        areaEl.innerHTML = '<div class="empty-state"><div class="empty-icon">📭</div><p>No shopper flow data for the selected period</p></div>';
+    function sfDrawArrows(wrapEl, transitions) {
+      const layer = wrapEl.querySelector('#traffic-arrows-layer');
+      if (!layer) return;
+      layer.innerHTML = '';
+      if (!transitions || !transitions.length) return;
+
+      const maxCount = Math.max(...transitions.map(t => t.count));
+
+      transitions.forEach(t => {
+        const from = sfZoneAnchor(wrapEl, t.from);
+        const to   = sfZoneAnchor(wrapEl, t.to);
+        if (!from || !to) return;
+
+        const width = Math.max(2, (t.count / maxCount) * 10);
+
+        // Shrink the line ~28px from each end so it doesn't run under the labels
+        const dx = to.x - from.x, dy = to.y - from.y;
+        const dist = Math.sqrt(dx * dx + dy * dy) || 1;
+        const shrink = 28;
+        const x1 = from.x + (dx / dist) * shrink;
+        const y1 = from.y + (dy / dist) * shrink;
+        const x2 = to.x - (dx / dist) * shrink;
+        const y2 = to.y - (dy / dist) * shrink;
+
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', x1); line.setAttribute('y1', y1);
+        line.setAttribute('x2', x2); line.setAttribute('y2', y2);
+        line.setAttribute('stroke', '#2563eb');
+        line.setAttribute('stroke-width', width.toFixed(1));
+        line.setAttribute('stroke-linecap', 'round');
+        line.setAttribute('opacity', '0.75');
+        line.setAttribute('marker-end', 'url(#arrow)');
+        layer.appendChild(line);
+      });
+    }
+
+    async function sfLoadSvg(store) {
+      if (store in _sfSvgCache) return _sfSvgCache[store];
+      try {
+        const r = await fetchWithTimeout(`/static/floor_plans/${encodeURIComponent(store)}.svg`);
+        if (!r.ok) { _sfSvgCache[store] = false; return false; }
+        const text = await r.text();
+        _sfSvgCache[store] = text;
+        return text;
+      } catch (e) {
+        _sfSvgCache[store] = false;
+        return false;
+      }
+    }
+
+    function sfJourneyListHtml(journeys) {
+      if (!journeys || !journeys.length) {
+        return `<div class="empty-state" style="padding:24px 12px"><p style="font-size:12.5px">No journeys detected for this period</p></div>`;
+      }
+      return journeys.map(j => `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid #f1f5f9">
+          <span style="font-size:12.5px;color:#334155;font-weight:600">${j.journey}</span>
+          <span style="font-size:11.5px;color:#fff;background:#2563eb;padding:2px 9px;border-radius:10px;font-weight:700;flex-shrink:0">${j.count}</span>
+        </div>`).join('');
+    }
+
+    function sfZoneListHtml(zoneTraffic) {
+      const entries = Object.entries(zoneTraffic).sort((a, b) => b[1] - a[1]);
+      if (!entries.length) {
+        return `<div class="empty-state" style="padding:24px 12px"><p style="font-size:12.5px">No zone traffic for this period</p></div>`;
+      }
+      const maxCount = entries[0][1];
+      return entries.map(([zone, count]) => {
+        const ratio = maxCount > 0 ? count / maxCount : 0;
+        return `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid #f1f5f9">
+          <span style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:#334155;font-weight:600">
+            <span style="width:11px;height:11px;border-radius:50%;background:${sfHeatColor(ratio)};box-shadow:0 0 0 1px rgba(0,0,0,.08);flex-shrink:0"></span>
+            ${zone}
+          </span>
+          <span style="font-size:12.5px;color:#0f172a;font-weight:700">${count}</span>
+        </div>`;
+      }).join('');
+    }
+
+    async function sfRenderMap() {
+      const areaEl = document.getElementById('sf-canvas-area');
+      if (!areaEl || !_sfData) return;
+
+      const store = S.store;
+      const svgText = await sfLoadSvg(store);
+
+      if (!svgText) {
+        areaEl.innerHTML = `<div class="empty-state"><div class="empty-icon">🗺️</div><p>Floor plan not yet available for this store.</p></div>`;
         return;
       }
 
-      if (_sfSelectedCam == null || !_sfCameras.some(c => c.camera_no === _sfSelectedCam)) {
-        _sfSelectedCam = _sfCameras[0].camera_no;
-      }
-
-      const singleCamBadgeHtml = `<span style="display:flex;align-items:center;gap:6px"><span style="width:14px;height:3px;background:#38bdf8;border-radius:2px;display:inline-block"></span>Single-Camera Trail</span>`;
-
-      const viewToggleHtml = `
-        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:16px">
-          <div style="display:flex;align-items:center;gap:8px">
-            <button class="cat-tab ${_sfViewMode === 'continuity' ? 'active' : ''}" onclick="sfSetViewMode('continuity')">🔗 Store Continuity View (Side-by-Side)</button>
-            <button class="cat-tab ${_sfViewMode === 'single' ? 'active' : ''}" onclick="sfSetViewMode('single')">📹 Single Camera Focus View</button>
+      areaEl.innerHTML = `
+        <div class="chart-card full" style="margin-bottom:16px">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin-bottom:4px">
+            <div>
+              <div class="chart-title">Shopper Flow — 2D Floor Plan Map</div>
+              <div class="chart-subtitle">${_sfData.total_unique || 0} unique visitors tracked across zones in the selected period</div>
+            </div>
           </div>
-          <div style="display:flex;align-items:center;gap:14px;font-size:12px;font-weight:600;color:#475569">
-            ${singleCamBadgeHtml}
-            <span style="display:flex;align-items:center;gap:6px"><span style="width:16px;height:3px;background:linear-gradient(90deg,${SF_JOURNEY_PALETTE[0]},${SF_JOURNEY_PALETTE[1]},${SF_JOURNEY_PALETTE[2]});border-radius:2px;display:inline-block"></span>Cross-Camera Shopper Journey</span>
+        </div>
+        <div style="display:flex;gap:18px;align-items:flex-start;flex-wrap:wrap">
+          <div class="chart-card" style="flex:2 1 640px;min-width:320px;padding:12px;overflow-x:auto">
+            <div id="sf-map-svg-wrap" style="min-width:640px"></div>
+          </div>
+          <div style="flex:1 1 300px;min-width:280px;display:flex;flex-direction:column;gap:16px">
+            <div class="chart-card">
+              <div class="chart-title" style="margin-bottom:4px">Zone Traffic</div>
+              <div class="chart-subtitle" style="margin-bottom:8px">Unique visitors per zone</div>
+              <div id="sf-zone-list"></div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-title" style="margin-bottom:4px">Top Journeys</div>
+              <div class="chart-subtitle" style="margin-bottom:8px">Most common shopper paths</div>
+              <div id="sf-journey-list"></div>
+            </div>
           </div>
         </div>`;
 
-      if (_sfViewMode === 'continuity') {
-        // Side-by-Side Store Continuity View with Global SVG coordinate bridges
-        let cardsHtml = '';
-        for (let i = 0; i < _sfCameras.length; i++) {
-          const cam = _sfCameras[i];
-          const isSelected = (cam.camera_no === _sfSelectedCam);
+      const wrapEl = document.getElementById('sf-map-svg-wrap');
+      wrapEl.innerHTML = svgText;
+      const svgEl = wrapEl.querySelector('svg');
+      if (svgEl) { svgEl.style.width = '100%'; svgEl.style.height = 'auto'; }
 
-          cardsHtml += `
-            <div id="sf-card-${cam.camera_no}" style="flex-shrink:0;width:390px;background:#ffffff;border-radius:12px;border:${isSelected ? '2px solid #2563eb' : '1px solid #e2e8f0'};box-shadow:${isSelected ? '0 6px 20px rgba(37,99,235,0.18)' : '0 2px 8px rgba(0,0,0,0.04)'};overflow:hidden;transition:all 0.2s ease">
-              <div style="padding:10px 14px;background:#f8fafc;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;justify-content:space-between">
-                <div>
-                  <span style="font-size:14px;font-weight:800;color:#0f172a">${cam.label}</span>
-                  <span style="font-size:11.5px;color:#64748b;margin-left:6px">(${cam.trail_count} tracks)</span>
-                </div>
-                <span style="font-size:11px;background:#e2e8f0;color:#475569;padding:2px 8px;border-radius:10px;font-weight:700">Pos #${i + 1}</span>
-              </div>
-              <div id="sf-img-wrap-${cam.camera_no}" style="position:relative;background:#0f172a;line-height:0;cursor:zoom-in" onclick="openLightbox('${cam.image}','${cam.label}')">
-                <img id="sf-bg-${cam.camera_no}" src="${cam.image}" alt="${cam.label}"
-                     style="display:block;width:100%;height:auto;max-height:55vh;object-fit:contain;pointer-events:none"/>
-                <canvas id="sf-canvas-${cam.camera_no}" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none"></canvas>
-                <canvas id="sf-anim-${cam.camera_no}" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none"></canvas>
-              </div>
-            </div>`;
-        }
+      sfApplyHeatmap(wrapEl, _sfData.zone_traffic || {});
+      sfDrawArrows(wrapEl, _sfData.transitions || []);
 
-        areaEl.innerHTML = viewToggleHtml + `
-          <div class="chart-card full" style="margin-bottom:18px;background:#f8fafc">
-            <div style="font-size:15px;font-weight:800;color:#0f172a;margin-bottom:4px">Store Layout Flow &mdash; Camera Sequence (Cam 5 &rarr; Cam 7 &rarr; Cam 2 &rarr; Cam 4 &rarr; Cam 3)</div>
-            <div style="font-size:12px;color:#64748b;margin-bottom:14px">Continuous shopper paths connecting coordinates across camera snapshot feeds.</div>
-            <div id="sf-continuity-wrap" style="position:relative;display:flex;align-items:flex-start;gap:40px;overflow-x:auto;padding:10px 4px 45px;scrollbar-width:thin">
-              <svg id="sf-global-svg" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:20;overflow:visible"></svg>
-              ${cardsHtml}
-            </div>
-          </div>`;
-
-        setTimeout(() => {
-          _sfCameras.forEach(c => renderCamTrails(c));
-          sfRenderCoordinateBridges();
-
-          const wrap = document.getElementById('sf-continuity-wrap');
-          if (wrap) {
-            wrap.removeEventListener('scroll', sfRenderCoordinateBridges);
-            wrap.addEventListener('scroll', sfRenderCoordinateBridges);
-          }
-        }, 100);
-
-      } else {
-        // Render Single Camera Focus View
-        const cam = _sfCameras.find(c => c.camera_no === _sfSelectedCam) || _sfCameras[0];
-        const shownTrails = cam.trails || [];
-
-        const tabsHtml = _sfCameras.length > 1
-          ? `<div class="cat-tabs" style="margin-bottom:16px">
-              ${_sfCameras.map(c => `<button class="cat-tab ${c.camera_no === _sfSelectedCam ? 'active' : ''}" onclick="sfSelectCamera(${c.camera_no})">${c.label}</button>`).join('')}
-            </div>`
-          : '';
-
-        const shownNote = cam.trail_count > shownTrails.length
-          ? ` &nbsp;·&nbsp; showing top ${shownTrails.length} of ${cam.trail_count} tracks`
-          : '';
-
-        areaEl.innerHTML = viewToggleHtml + tabsHtml + `
-          <div class="chart-card full" style="margin-bottom:18px">
-            <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px">
-              <div>
-                <div style="font-size:17px;font-weight:800;color:#0f172a;margin-bottom:3px">Shopper Flow &mdash; Movement Trails (${cam.label})</div>
-                <div style="font-size:12.5px;color:#64748b">${cam.label} &nbsp;·&nbsp; ${cam.docs} snapshots${shownNote}</div>
-              </div>
-            </div>
-            <div style="display:flex;justify-content:center">
-              <div style="position:relative;display:inline-block;border-radius:10px;overflow:hidden;border:2px solid #e2e8f0;cursor:zoom-in;background:#0f172a;line-height:0"
-                   onclick="openLightbox('${cam.image}','${cam.label}')">
-                <img id="sf-bg-${cam.camera_no}" src="${cam.image}" alt="${cam.label}"
-                     style="display:block;max-width:100%;max-height:70vh;width:auto;height:auto;background:#0f172a;pointer-events:none"/>
-                <canvas id="sf-canvas-${cam.camera_no}" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none"></canvas>
-                <canvas id="sf-anim-${cam.camera_no}" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none"></canvas>
-              </div>
-            </div>
-          </div>`;
-
-        setTimeout(() => renderCamTrails(cam), 0);
-      }
+      document.getElementById('sf-zone-list').innerHTML = sfZoneListHtml(_sfData.zone_traffic || {});
+      document.getElementById('sf-journey-list').innerHTML = sfJourneyListHtml(_sfData.top_journeys || []);
     }
 
     async function loadShopperFlow() {
       const areaEl = document.getElementById('sf-canvas-area');
-
       const cacheKey = `${S.start}_${S.end}_${S.store || 'all'}`;
 
       if (areaEl) areaEl.innerHTML = '<div class="loading-overlay" style="min-height:300px;display:flex;align-items:center;justify-content:center"><span class="spinner"></span> &nbsp; Loading shopper flow data...</div>';
@@ -1344,13 +1162,10 @@
 
       if (!areaEl) return;
 
-      _sfCameras = data.cameras || [];
-      _sfTransitions = data.transitions || [];
-      _sfJourneys = data.journeys || [];
-      _sfLayoutOrder = data.layout_order || [];
-      _sfSelectedCam = null;
-      sfRenderArea();
+      _sfData = data;
+      await sfRenderMap();
     }
+
 
     // ─────────────────────────────────────────────────────────────────────────
     // GATE ACTIVITY — gate_activity collection, grouped per store/day
@@ -1557,7 +1372,6 @@
       btn.addEventListener('click', () => {
         document.querySelectorAll('.nav-item').forEach(b => b.classList.remove('active'));
         btn.classList.add('active');
-        if (S.view === 'shopperflow' && btn.dataset.view !== 'shopperflow') sfStopAnim();
         S.view = btn.dataset.view;
         document.querySelectorAll('[id^="view-"]').forEach(v => { v.style.display = 'none'; v.classList.remove('view-enter'); });
         const activeView = document.getElementById(`view-${S.view}`);
@@ -1586,7 +1400,7 @@
         const storeSelected = S.store && S.store !== 'all';
         if (promptEl)  promptEl.style.display  = storeSelected ? 'none' : '';
         if (contentEl) contentEl.style.display = storeSelected ? '' : 'none';
-        if (storeSelected) { await loadShopperFlow(); } else { sfStopAnim(); }
+        if (storeSelected) { await loadShopperFlow(); }
       } else if (S.view === 'gate') {
         await loadGateActivity();
       }

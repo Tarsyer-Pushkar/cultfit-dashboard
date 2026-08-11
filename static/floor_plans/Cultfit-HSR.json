@@ -1,0 +1,131 @@
+{
+  "store_code": "Cultfit-HSR",
+  "device_serial_id": "aa5a77a1063bdfdf",
+  "floor_plan": {
+    "shape": "L-shaped (sections 1-4 straight, section 5 turns right at the end)",
+    "canvas": {
+      "width": 1550,
+      "height": 760,
+      "units": "px",
+      "note": "Schematic top-down layout derived from camera-view zone annotations. Not to physical scale."
+    },
+    "camera_sequence": ["camera_5", "camera_7", "camera_2", "camera_4", "camera_3"],
+    "entrance": {
+      "section": "Section_1",
+      "camera_id": "camera_5",
+      "wall": "west",
+      "position": { "x": 60, "y": 240 }
+    },
+    "sections": [
+      {
+        "section": "Section_1",
+        "camera_id": "camera_5",
+        "sequence_order": 1,
+        "bounds": { "x": 60, "y": 100, "width": 350, "height": 300 },
+        "camera_marker": { "x": 380, "y": 140 },
+        "connects_to": { "next_section": "Section_2", "direction": "east" },
+        "zones": [
+          {
+            "zone_id": "Zone_1",
+            "polygon": [[80, 120], [390, 120], [390, 380], [80, 380]]
+          }
+        ]
+      },
+      {
+        "section": "Section_2",
+        "camera_id": "camera_7",
+        "sequence_order": 2,
+        "bounds": { "x": 410, "y": 100, "width": 350, "height": 300 },
+        "camera_marker": { "x": 740, "y": 140 },
+        "connects_to": { "prev_section": "Section_1", "next_section": "Section_3", "direction": "east" },
+        "zones": [
+          {
+            "zone_id": "Zone_3",
+            "polygon": [[430, 120], [580, 120], [580, 380], [430, 380]]
+          },
+          {
+            "zone_id": "Zone_2",
+            "polygon": [[590, 120], [750, 120], [750, 380], [590, 380]]
+          }
+        ]
+      },
+      {
+        "section": "Section_3",
+        "camera_id": "camera_2",
+        "sequence_order": 3,
+        "bounds": { "x": 760, "y": 100, "width": 350, "height": 300 },
+        "camera_marker": { "x": 1080, "y": 140 },
+        "connects_to": { "prev_section": "Section_2", "next_section": "Section_4", "direction": "east" },
+        "zones": [
+          {
+            "zone_id": "Zone_6",
+            "polygon": [[780, 120], [1090, 120], [1090, 210], [780, 210]]
+          },
+          {
+            "zone_id": "Zone_5",
+            "polygon": [[780, 220], [1090, 220], [1090, 310], [780, 310]]
+          },
+          {
+            "zone_id": "Zone_4",
+            "polygon": [[950, 320], [1090, 320], [1090, 380], [950, 380]]
+          }
+        ]
+      },
+      {
+        "section": "Section_4",
+        "camera_id": "camera_4",
+        "sequence_order": 4,
+        "bounds": { "x": 1110, "y": 100, "width": 380, "height": 300 },
+        "camera_marker": { "x": 1460, "y": 140 },
+        "connects_to": { "prev_section": "Section_3", "next_section": "Section_5", "direction": "turn_right (south)" },
+        "zones": [
+          {
+            "zone_id": "Zone_7",
+            "polygon": [[1130, 120], [1270, 120], [1270, 380], [1130, 380]]
+          },
+          {
+            "zone_id": "Zone_8",
+            "polygon": [[1280, 120], [1470, 120], [1470, 240], [1280, 240]]
+          },
+          {
+            "zone_id": "Zone_9",
+            "polygon": [[1280, 250], [1470, 250], [1470, 380], [1280, 380]]
+          }
+        ]
+      },
+      {
+        "section": "Section_5",
+        "camera_id": "camera_3",
+        "sequence_order": 5,
+        "note": "Turn section - store bends south (right) at the end of Section_4",
+        "bounds": { "x": 1140, "y": 400, "width": 350, "height": 300 },
+        "camera_marker": { "x": 1460, "y": 440 },
+        "connects_to": { "prev_section": "Section_4", "direction": "south (end of flow)" },
+        "zones": [
+          {
+            "zone_id": "Zone_10",
+            "polygon": [[1160, 420], [1470, 420], [1470, 680], [1160, 680]]
+          }
+        ]
+      }
+    ],
+    "camera_flow_edges": [
+      { "from": "camera_5", "to": "camera_7", "direction": "straight_east" },
+      { "from": "camera_7", "to": "camera_2", "direction": "straight_east" },
+      { "from": "camera_2", "to": "camera_4", "direction": "straight_east" },
+      { "from": "camera_4", "to": "camera_3", "direction": "turn_right_south" }
+    ],
+    "zone_to_camera_map": {
+      "Zone_1": "camera_5",
+      "Zone_2": "camera_7",
+      "Zone_3": "camera_7",
+      "Zone_4": "camera_2",
+      "Zone_5": "camera_2",
+      "Zone_6": "camera_2",
+      "Zone_7": "camera_4",
+      "Zone_8": "camera_4",
+      "Zone_9": "camera_4",
+      "Zone_10": "camera_3"
+    }
+  }
+}

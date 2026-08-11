@@ -2,7 +2,7 @@ from flask import Flask, jsonify, request, session, send_from_directory, Respons
 from flask_cors import CORS
 from datetime import datetime, timedelta
 from functools import wraps
-import os, csv, io, time, json
+import os, csv, io, time, json, collections
 import bcrypt
 from dotenv import load_dotenv
 import pymongo
@@ -590,33 +590,145 @@ def cf_heatmap():
         print(f"[DB] Heatmap query error: {exc}")
         return jsonify({'error': 'Database query failed', 'detail': str(exc)}), 503
 
-# ─── Shopper Flow (reid collection — movement trails) ─────────────────────────
-# reid's `gender` dict maps gender -> list of track IDs present in that doc.
-# `person_bbox_list` is a FLAT dict keyed by track ID (not nested per gender,
-# not positionally paired) -> a list of that track's boxes seen within that
-# one doc, already in chronological order. A trail is built by resolving each
-# track ID's gender from the `gender` lists, then concatenating its boxes
-# across every doc in the selected range for one camera, ordered by
-# (doc date_time, in-doc box order). Children are folded into the 'male'
-# track group (same rule used elsewhere); staff are ignored (never appear in
-# the male/female/child lists, so their boxes have no resolvable gender and
-# are skipped). Trails are capped to the longest SHOPPERFLOW_MAX_TRAILS (most
-# points seen) to keep the overlay readable.
+# ─── Shopper Flow (reid collection — zone-based 2D floor-plan map) ────────────
+# reid docs carry a `store_location` field (e.g. "Zone_5") identifying which
+# physical zone that detection belongs to — this is store-wide zone
+# granularity, finer than camera_no, and is what floor plan polygons in
+# static/floor_plans/<store_code>.svg are keyed against via their
+# `data-zone` attribute. `gender` maps gender -> list of person IDs present
+# in that doc; `person_bbox_list` maps person ID -> that person's boxes seen
+# within the doc. Children are folded into the 'male' bucket (same rule used
+# for trail coloring elsewhere in this app); staff are always skipped. A
+# person appearance only counts if it has >= 2 boxes in that doc (noise
+# filter), matching the point-count filter already used elsewhere.
 #
-# reid track IDs are store-wide, not per-camera: the same ID recurs across
-# different camera_no values as one physical shopper walks between camera
-# fields of view. A lightweight pre-pass over ALL cameras (not just the one
-# currently being processed) finds which track IDs crossed 2+ distinct
-# cameras and ranks them; those get a stable 'j' color-palette index in every
-# camera's trail output, so the SAME shopper reads as the SAME color on every
-# camera image they appear in. Everyone else keeps 'j': null and falls back
-# to the plain male/female coloring on the frontend.
-SHOPPERFLOW_MAX_TRAILS = 200
-SHOPPERFLOW_MAX_JOURNEY_COLORS = 12
+# Journeys: per person, the zones they were seen in are ordered by
+# date_time and consecutive duplicate zones are collapsed. Camera coverage
+# is sparse enough that a person's raw sequence can "skip" straight from one
+# zone to a physically distant one (e.g. Zone_1 -> Zone_10) with no detection
+# in the zones between — drawn as a single arrow, that reads as a long jump
+# across the whole store instead of a walking path. Before counting
+# transitions/journeys, each raw hop is checked against the store's zone
+# adjacency graph (built from actual polygon proximity in
+# static/floor_plans/<store_code>.json — see _build_zone_adjacency); any
+# non-adjacent hop is bridged via the shortest path of real adjacent zones
+# between the two, so both `transitions` and `top_journeys` only ever
+# contain physically continuous, nearby-zone-to-nearby-zone hops. "Entry"
+# (the store's single physical entrance/exit) is prepended as the first
+# waypoint and is only adjacent to the zone(s) in the entrance's section.
+SHOPPERFLOW_MAX_JOURNEYS = 10
+ZONE_ADJACENCY_GAP_PX = 60   # max polygon edge-to-edge gap (px) to count two zones as neighbors
 
-STORE_CAMERA_LAYOUTS = {
-    'Cultfit-HSR': [5, 7, 2, 4, 3],
-}
+_FLOOR_PLAN_DIR = os.path.join(os.path.dirname(__file__), 'static', 'floor_plans')
+_zone_geometry_cache = {}
+
+def _load_zone_geometry(store):
+    """Zone bounding boxes + which zones sit in the entrance's section, read from
+    static/floor_plans/<store>.json. Returns None if that file doesn't exist."""
+    if store in _zone_geometry_cache:
+        return _zone_geometry_cache[store]
+
+    geometry = None
+    path = os.path.join(_FLOOR_PLAN_DIR, f'{store}.json')
+    if os.path.exists(path):
+        try:
+            with open(path, encoding='utf-8') as f:
+                data = json.load(f)
+            fp = data.get('floor_plan', {})
+            entrance_section = (fp.get('entrance') or {}).get('section')
+
+            zones = {}
+            for section in fp.get('sections', []):
+                for z in section.get('zones', []):
+                    poly = z.get('polygon') or []
+                    if not poly or not z.get('zone_id'):
+                        continue
+                    xs = [p[0] for p in poly]
+                    ys = [p[1] for p in poly]
+                    zones[z['zone_id']] = {
+                        'x0': min(xs), 'x1': max(xs),
+                        'y0': min(ys), 'y1': max(ys),
+                        'section': section.get('section'),
+                    }
+
+            entrance_zones = [zid for zid, info in zones.items() if info['section'] == entrance_section]
+            geometry = {'zones': zones, 'entrance_zones': entrance_zones}
+        except Exception as exc:
+            print(f"[FloorPlan] Failed to load geometry for {store}: {exc}")
+            geometry = None
+
+    _zone_geometry_cache[store] = geometry
+    return geometry
+
+def _rect_gap(a, b):
+    """Edge-to-edge gap between two axis-aligned rects; 0 (or negative) if they overlap/touch."""
+    dx = max(a['x0'] - b['x1'], b['x0'] - a['x1'], 0)
+    dy = max(a['y0'] - b['y1'], b['y0'] - a['y1'], 0)
+    if dx > 0 and dy > 0:
+        return (dx ** 2 + dy ** 2) ** 0.5
+    return max(dx, dy)
+
+def _build_zone_adjacency(store):
+    """zone_id -> set(neighboring zone_ids), including 'Entry', derived from real
+    polygon proximity (not a hand-picked sequence) so branching at multi-zone
+    sections falls out naturally. Returns None if no floor plan geometry exists
+    for this store."""
+    geometry = _load_zone_geometry(store)
+    if not geometry:
+        return None
+
+    zones = geometry['zones']
+    adjacency = {zid: set() for zid in zones}
+    adjacency['Entry'] = set()
+    for zid in geometry['entrance_zones']:
+        adjacency['Entry'].add(zid)
+        adjacency[zid].add('Entry')
+
+    zids = list(zones.keys())
+    for i in range(len(zids)):
+        for j in range(i + 1, len(zids)):
+            a, b = zids[i], zids[j]
+            if _rect_gap(zones[a], zones[b]) <= ZONE_ADJACENCY_GAP_PX:
+                adjacency[a].add(b)
+                adjacency[b].add(a)
+    return adjacency
+
+def _shortest_zone_path(adjacency, start, end):
+    """BFS shortest path between two nodes of the adjacency graph, inclusive of
+    both ends. Returns None if unreachable."""
+    if start == end:
+        return [start]
+    visited = {start}
+    queue = collections.deque([[start]])
+    while queue:
+        path = queue.popleft()
+        node = path[-1]
+        for neighbor in sorted(adjacency.get(node, ())):
+            if neighbor == end:
+                return path + [neighbor]
+            if neighbor not in visited:
+                visited.add(neighbor)
+                queue.append(path + [neighbor])
+    return None
+
+def _stitch_zone_path(adjacency, raw_path):
+    """Bridge any non-adjacent hop in raw_path through real intermediate zones
+    via the shortest adjacency path, so every hop in the result is a
+    physically continuous, nearby-zone-to-nearby-zone step."""
+    if not adjacency:
+        return raw_path
+    stitched = [raw_path[0]]
+    for zone in raw_path[1:]:
+        prev = stitched[-1]
+        if zone in adjacency.get(prev, ()):
+            stitched.append(zone)
+        else:
+            bridge = _shortest_zone_path(adjacency, prev, zone)
+            if bridge:
+                stitched.extend(bridge[1:])
+            else:
+                stitched.append(zone)
+    return stitched
 
 @app.route('/api/cultfit/shopper-flow')
 @require_login
@@ -625,12 +737,17 @@ def cf_shopper_flow():
 
     db = _get_db()
     if db is None:
-        return jsonify({'cameras': [], 'db_connected': False})
+        return jsonify({'zone_traffic': {}, 'transitions': [], 'top_journeys': [],
+                         'total_unique': 0, 'db_connected': False})
 
     try:
         collection = db['reid']
+        collection.create_index(
+            [('project_name', 1), ('store_code', 1), ('date_time', 1)],
+            background=True, name='sf_perf_idx'
+        )
 
-        base_filter = {
+        match_filter = {
             'project_name': PROJECT_NAME,
             'date_time': {
                 '$gte': start_dt.strftime('%Y-%m-%d %H:%M:%S'),
@@ -638,178 +755,82 @@ def cf_shopper_flow():
             }
         }
         if store:
-            base_filter['store_code'] = store
+            match_filter['store_code'] = store
 
-        # Determine target camera layout order based on selected store
-        requested_store = store or ''
-        target_layout = None
-        for s_code, layout in STORE_CAMERA_LAYOUTS.items():
-            if s_code.lower() in requested_store.lower():
-                target_layout = layout
-                break
+        # No server-side sort here — each person's timeline is re-sorted by
+        # date_time locally below, so an (expensive, potentially unindexed)
+        # whole-collection sort on the DB side isn't needed.
+        docs = collection.find(
+            match_filter,
+            {'_id': 0, 'date_time': 1, 'store_location': 1, 'gender': 1, 'person_bbox_list': 1}
+        )
 
-        # Cross-camera pass: retrieve camera sightings and timestamps per track ID
-        cross_cam_docs = list(collection.find(
-            base_filter,
-            {'_id': 0, 'camera_no': 1, 'gender': 1, 'date_time': 1}
-        ).limit(8000))
+        # (person_id, zone, date_time) appearances, noise-filtered
+        person_zone_counts = {}          # zone -> set(person_id)
+        person_timeline     = {}          # person_id -> [(date_time, zone), ...]
 
-        tid_cameras   = {}
-        tid_sightings = {}
-        tid_timeline  = {}
+        for doc in docs:
+            zone = doc.get('store_location')
+            if not zone:
+                continue
+            dt_str = doc.get('date_time') or ''
+            gender = doc.get('gender') or {}
+            bboxes = doc.get('person_bbox_list') or {}
+            if not isinstance(bboxes, dict):
+                continue
 
-        for doc in cross_cam_docs:
-            camera_no = doc.get('camera_no')
-            dt_str    = doc.get('date_time') or ''
-            gender    = doc.get('gender') or {}
-            ids       = set()
+            person_ids = set()
             for key in ('male', 'child', 'female'):
-                ids.update(str(t) for t in (gender.get(key) or []))
-            for tid in ids:
-                tid_cameras.setdefault(tid, set()).add(camera_no)
-                tid_sightings[tid] = tid_sightings.get(tid, 0) + 1
-                if dt_str and camera_no is not None:
-                    tid_timeline.setdefault(tid, []).append((dt_str, camera_no))
+                person_ids.update(str(p) for p in (gender.get(key) or []))
 
-        multi_cam = [(tid, len(cams), tid_sightings[tid]) for tid, cams in tid_cameras.items() if len(cams) >= 2]
-        multi_cam.sort(key=lambda t: (t[1], t[2]), reverse=True)
-        journey_color_index = {tid: i for i, (tid, _, _) in enumerate(multi_cam[:SHOPPERFLOW_MAX_JOURNEY_COLORS])}
+            for pid in person_ids:
+                boxes = bboxes.get(pid)
+                if not isinstance(boxes, list) or len(boxes) < 2:
+                    continue
+                person_zone_counts.setdefault(zone, set()).add(pid)
+                if dt_str:
+                    person_timeline.setdefault(pid, []).append((dt_str, zone))
 
-        # Calculate transitions and top journey paths across cameras
+        zone_traffic = {zone: len(pids) for zone, pids in person_zone_counts.items()}
+        total_unique = len(person_timeline)
+
+        # Build per-person journeys (dedup consecutive zones, prepend Entry,
+        # then bridge non-adjacent hops through real intermediate zones)
+        adjacency = _build_zone_adjacency(store) if store else None
         transition_counts = {}
-        top_journeys = []
-        tid_journeys = {}
+        journey_counts = {}
 
-        for tid, len_cams, sightings in multi_cam[:SHOPPERFLOW_MAX_JOURNEY_COLORS]:
-            timeline = tid_timeline.get(tid, [])
+        for pid, timeline in person_timeline.items():
             timeline.sort(key=lambda x: x[0])
-            cam_path = []
-            for _, cam in timeline:
-                if not cam_path or cam_path[-1] != cam:
-                    cam_path.append(cam)
-            if len(cam_path) >= 2:
-                top_journeys.append({
-                    'tid':  tid,
-                    'j':    journey_color_index.get(tid),
-                    'path': cam_path
-                })
-                tid_journeys[tid] = cam_path
-                for i in range(len(cam_path) - 1):
-                    pair = (cam_path[i], cam_path[i + 1])
-                    transition_counts[pair] = transition_counts.get(pair, 0) + 1
+            raw_path = ['Entry']
+            for _, zone in timeline:
+                if raw_path[-1] != zone:
+                    raw_path.append(zone)
+            if len(raw_path) < 2:
+                continue
+            path = _stitch_zone_path(adjacency, raw_path)
+            for i in range(len(path) - 1):
+                pair = (path[i], path[i + 1])
+                transition_counts[pair] = transition_counts.get(pair, 0) + 1
+            journey_str = ' → '.join(path)
+            journey_counts[journey_str] = journey_counts.get(journey_str, 0) + 1
 
         formatted_transitions = [
-            {'from': f_cam, 'to': t_cam, 'count': cnt}
-            for (f_cam, t_cam), cnt in sorted(transition_counts.items(), key=lambda x: x[1], reverse=True)
+            {'from': f_zone, 'to': t_zone, 'count': cnt}
+            for (f_zone, t_zone), cnt in sorted(transition_counts.items(), key=lambda x: x[1], reverse=True)
         ]
 
-        db_cams = collection.distinct('camera_no', base_filter)
-        if target_layout:
-            def sort_key(c):
-                try:
-                    c_num = int(str(c).replace('camera_', '').replace('Camera ', '').strip())
-                except ValueError:
-                    c_num = c
-                if c_num in target_layout:
-                    return (0, target_layout.index(c_num))
-                elif str(c) in [str(x) for x in target_layout]:
-                    return (0, [str(x) for x in target_layout].index(str(c)))
-                else:
-                    return (1, str(c))
-            camera_nos = sorted(db_cams, key=sort_key)
-            layout_order_out = target_layout
-        else:
-            def std_sort_key(c):
-                try:
-                    return (0, int(str(c).replace('camera_', '').replace('Camera ', '').strip()))
-                except ValueError:
-                    return (1, str(c))
-            camera_nos = sorted(db_cams, key=std_sort_key)
-            layout_order_out = [c for c in camera_nos]
-
-        cameras_result = []
-
-        for camera_no in camera_nos:
-            match_filter = dict(base_filter, camera_no=camera_no)
-
-            docs = list(collection.find(
-                match_filter,
-                {'_id': 0, 'date_time': 1, 'gender': 1, 'person_bbox_list': 1}
-            ).sort('date_time', 1).limit(5000))
-            if not docs:
-                continue
-
-            image_url = _latest_nvr_image(db, camera_no, store)
-            if not image_url:
-                continue
-
-            trails = []
-            for doc in docs:
-                gender = doc.get('gender') or {}
-                bboxes = doc.get('person_bbox_list') or {}
-                if not isinstance(bboxes, dict):
-                    continue
-
-                id_group = {}
-                for tid in (gender.get('male') or []):
-                    id_group[str(tid)] = 'male'
-                for tid in (gender.get('child') or []):
-                    id_group[str(tid)] = 'male'
-                for tid in (gender.get('female') or []):
-                    id_group[str(tid)] = 'female'
-
-                for tid, boxes in bboxes.items():
-                    group = id_group.get(str(tid))
-                    if group is None or not isinstance(boxes, list):
-                        continue
-                    pts = []
-                    for box in boxes:
-                        if isinstance(box, (list, tuple)) and len(box) == 4:
-                            pts.append({'x': (box[0] + box[2]) / 2, 'y': (box[1] + box[3]) / 2})
-                    if len(pts) < 2:
-                        continue
-
-                    tid_str  = str(tid)
-                    j_idx    = journey_color_index.get(tid_str)
-                    prev_cam = None
-                    next_cam = None
-                    if j_idx is not None and tid_str in tid_journeys:
-                        path = tid_journeys[tid_str]
-                        if camera_no in path:
-                            idx = path.index(camera_no)
-                            if idx > 0:
-                                prev_cam = path[idx - 1]
-                            if idx < len(path) - 1:
-                                next_cam = path[idx + 1]
-
-                    trails.append({
-                        'id':       tid_str,
-                        'g':        'm' if group == 'male' else 'f',
-                        'j':        j_idx,
-                        'prev_cam': prev_cam,
-                        'next_cam': next_cam,
-                        'points':   pts,
-                    })
-
-            trail_count = len(trails)
-            trails.sort(key=lambda t: len(t['points']), reverse=True)
-            trails = trails[:SHOPPERFLOW_MAX_TRAILS]
-
-            cameras_result.append({
-                'camera_no':   camera_no,
-                'label':       f'Camera {camera_no}',
-                'image':       image_url,
-                'docs':        len(docs),
-                'trail_count': trail_count,
-                'trails':      trails,
-            })
+        top_journeys = [
+            {'journey': journey, 'count': cnt}
+            for journey, cnt in sorted(journey_counts.items(), key=lambda x: x[1], reverse=True)[:SHOPPERFLOW_MAX_JOURNEYS]
+        ]
 
         return jsonify({
-            'cameras':      cameras_result,
-            'layout_order': layout_order_out,
-            'transitions':  formatted_transitions,
-            'journeys':     top_journeys,
-            'db_connected': True,
+            'zone_traffic':  zone_traffic,
+            'transitions':   formatted_transitions,
+            'top_journeys':  top_journeys,
+            'total_unique':  total_unique,
+            'db_connected':  True,
         })
 
     except Exception as exc:
