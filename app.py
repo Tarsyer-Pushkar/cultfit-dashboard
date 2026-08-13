@@ -264,9 +264,12 @@ def _parse_range():
 # ─── Passerby (Male / Female — camera_no 2, count+opp_count, staff->female, child->male)
 def _footfall_exprs(category):
     if category == 'footfall':
-        # male = count_male ; female = count_female
-        male_expr = {'$ifNull': ['$count_male', 0]}
-        female_expr = {'$ifNull': ['$count_female', 0]}
+        # male = count_female only ; female = count_male + count_child only
+        male_expr = {'$ifNull': ['$count_female', 0]}
+        female_expr = {'$add': [
+            {'$ifNull': ['$count_male', 0]},
+            {'$ifNull': ['$count_child', 0]},
+        ]}
     else:
         # passerby: male = count_male + opp_count_male + count_child + opp_count_child
         #           female = count_female + opp_count_female + count_staff + opp_count_staff
