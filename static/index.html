@@ -1041,25 +1041,6 @@
         </div>`).join('');
     }
 
-    function sfZoneListHtml(zoneTraffic) {
-      const entries = Object.entries(zoneTraffic).sort((a, b) => b[1] - a[1]);
-      if (!entries.length) {
-        return `<div class="empty-state" style="padding:24px 12px"><p style="font-size:12.5px">No zone traffic for this period</p></div>`;
-      }
-      const maxCount = entries[0][1];
-      return entries.map(([zone, count]) => {
-        const ratio = maxCount > 0 ? count / maxCount : 0;
-        return `
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-bottom:1px solid #f1f5f9">
-          <span style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:#334155;font-weight:600">
-            <span style="width:11px;height:11px;border-radius:50%;background:${sfHeatColor(ratio)};box-shadow:0 0 0 1px rgba(0,0,0,.08);flex-shrink:0"></span>
-            ${zone}
-          </span>
-          <span style="font-size:12.5px;color:#0f172a;font-weight:700">${count}</span>
-        </div>`;
-      }).join('');
-    }
-
     async function sfRenderMap() {
       const areaEl = document.getElementById('sf-canvas-area');
       if (!areaEl || !_sfData) return;
@@ -1087,11 +1068,6 @@
           </div>
           <div style="flex:1 1 300px;min-width:280px;display:flex;flex-direction:column;gap:16px">
             <div class="chart-card">
-              <div class="chart-title" style="margin-bottom:4px">Zone Traffic</div>
-              <div class="chart-subtitle" style="margin-bottom:8px">Unique visitors per zone</div>
-              <div id="sf-zone-list"></div>
-            </div>
-            <div class="chart-card">
               <div class="chart-title" style="margin-bottom:4px">Top Journeys</div>
               <div class="chart-subtitle" style="margin-bottom:8px">Most common shopper paths</div>
               <div id="sf-journey-list"></div>
@@ -1107,7 +1083,6 @@
       sfApplyHeatmap(wrapEl, _sfData.zone_traffic || {});
       sfDrawArrows(wrapEl, _sfData.transitions || []);
 
-      document.getElementById('sf-zone-list').innerHTML = sfZoneListHtml(_sfData.zone_traffic || {});
       document.getElementById('sf-journey-list').innerHTML = sfJourneyListHtml(_sfData.top_journeys || []);
     }
 
