@@ -450,6 +450,42 @@ def export_footfall():
     )
     return response
 
+# ─── Camera ROI (Region of Interest) config ───────────────────────────────────
+# roi_config.json: { "<store_code>": { "<camera_no>": [ {"x":.., "y":..}, ... ] } }
+# When a (store_code, camera_no) pair has a polygon here, heatmap detections
+# whose bbox center falls outside it are dropped entirely from both the point
+# cloud used to draw the density overlay and the male/female/child/staff
+# totals returned to the frontend. Pairs with no entry behave exactly as
+# before (unfiltered) — this is additive, not a redesign of the pipeline.
+_ROI_CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'roi_config.json')
+
+def _load_roi_config():
+    try:
+        with open(_ROI_CONFIG_FILE, 'r') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+def _get_roi_polygon(store, camera_no):
+    store_cfg = _load_roi_config().get(store)
+    if not store_cfg:
+        return None
+    poly = store_cfg.get(str(camera_no))
+    if not poly:
+        return None
+    return [(p['x'], p['y']) for p in poly]
+
+def _point_in_polygon(x, y, poly):
+    """Ray-casting point-in-polygon test; poly is a list of (x, y) vertices."""
+    inside = False
+    x1, y1 = poly[-1]
+    for x2, y2 in poly:
+        if (y1 > y) != (y2 > y) and x < (x2 - x1) * (y - y1) / (y2 - y1) + x1:
+            inside = not inside
+        x1, y1 = x2, y2
+    return inside
+
 # ─── Heatmap ──────────────────────────────────────────────────────────────────
 # Cameras are discovered dynamically from whatever camera_no values are present
 # in the heatmap collection (no fixed camera list, no cap). For each camera_no
@@ -512,6 +548,7 @@ def cf_heatmap():
 
         for camera_no in camera_nos:
             match_filter = dict(base_filter, camera_no=camera_no)
+            roi_poly = _get_roi_polygon(store, camera_no)
 
             docs = list(collection.find(
                 match_filter,
@@ -526,26 +563,61 @@ def cf_heatmap():
 
             agg = {'docs': 0, 'total': 0, 'male': 0, 'female': 0, 'child': 0, 'staff': 0, 'points': []}
             for doc in docs:
-                cnt = doc.get('count', {}) or {}
                 bboxes = doc.get('person_bbox_list', {}) or {}
-
                 agg['docs'] += 1
-                agg['male']   += int(cnt.get('male',   0))
-                agg['female'] += int(cnt.get('female', 0))
-                agg['child']  += int(cnt.get('child',  0))
-                agg['staff']  += int(cnt.get('staff',  0))
-                agg['total']  += (int(cnt.get('male', 0)) + int(cnt.get('female', 0)) +
-                                  int(cnt.get('child', 0)) + int(cnt.get('staff', 0)))
 
-                for gender, boxes in bboxes.items():
-                    if gender == 'staff' or not isinstance(boxes, list):
-                        continue
-                    for box in boxes[:20]:
-                        if isinstance(box, (list, tuple)) and len(box) == 4:
-                            agg['points'].append({
-                                'x1': box[0], 'y1': box[1], 'x2': box[2], 'y2': box[3],
-                                'g': gender[0] if gender else 'u',
-                            })
+                if roi_poly is not None:
+                    # The doc's `count` dict has no per-box position, so an
+                    # ROI-scoped total can't be read from it — it has to be
+                    # derived from boxes actually inside the polygon. Every
+                    # category (including staff) is counted here for
+                    # analytics correctness, even though staff boxes are
+                    # never added to the drawn point cloud below.
+                    doc_male = doc_female = doc_child = doc_staff = 0
+                    for gender in ('male', 'female', 'child', 'staff'):
+                        boxes = bboxes.get(gender)
+                        if not isinstance(boxes, list):
+                            continue
+                        kept_points = 0
+                        for box in boxes:
+                            if not (isinstance(box, (list, tuple)) and len(box) == 4):
+                                continue
+                            cx = (box[0] + box[2]) / 2.0
+                            cy = (box[1] + box[3]) / 2.0
+                            if not _point_in_polygon(cx, cy, roi_poly):
+                                continue
+                            if gender == 'male':     doc_male += 1
+                            elif gender == 'female': doc_female += 1
+                            elif gender == 'child':  doc_child += 1
+                            else:                    doc_staff += 1
+                            if gender != 'staff' and kept_points < 20:
+                                agg['points'].append({
+                                    'x1': box[0], 'y1': box[1], 'x2': box[2], 'y2': box[3],
+                                    'g': gender[0],
+                                })
+                                kept_points += 1
+                else:
+                    cnt = doc.get('count', {}) or {}
+                    doc_male   = int(cnt.get('male',   0))
+                    doc_female = int(cnt.get('female', 0))
+                    doc_child  = int(cnt.get('child',  0))
+                    doc_staff  = int(cnt.get('staff',  0))
+
+                    for gender, boxes in bboxes.items():
+                        if gender == 'staff' or not isinstance(boxes, list):
+                            continue
+                        for box in boxes[:20]:
+                            if isinstance(box, (list, tuple)) and len(box) == 4:
+                                agg['points'].append({
+                                    'x1': box[0], 'y1': box[1], 'x2': box[2], 'y2': box[3],
+                                    'g': gender[0] if gender else 'u',
+                                })
+
+                agg['male']   += doc_male
+                agg['female'] += doc_female
+                agg['child']  += doc_child
+                agg['staff']  += doc_staff
+                agg['total']  += doc_male + doc_female + doc_child + doc_staff
 
             points = agg['points']
             if len(points) > 4000:

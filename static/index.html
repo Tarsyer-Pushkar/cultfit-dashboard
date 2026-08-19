@@ -723,22 +723,26 @@
     // ─────────────────────────────────────────────────────────────────────────
     // HEATMAP — real MongoDB data + canvas overlay
     // ─────────────────────────────────────────────────────────────────────────
-    function _hmRamp() {
+    // Category color overlay: each point carries a category letter (m/f/c —
+    // staff is never included in the point cloud) and is accumulated into
+    // its own density grid so overlapping categories blend rather than one
+    // hiding another. Hue encodes category; alpha within a category's ramp
+    // encodes local density.
+    const HM_CATEGORY_COLORS = { m: [34, 211, 238], f: [244, 114, 182], c: [250, 204, 21] };
+
+    function _hmCategoryRamp(rgb) {
       const ramp = new Array(256);
       for (let v = 0; v < 256; v++) {
         if (v === 0) { ramp[v] = [0, 0, 0, 0]; continue; }
         const t = v / 255;
         const A = Math.round(90 + t * 125);
-        let R, G, B;
-        if (t < 0.30) { const s = t / 0.30; R = Math.round(20 + 120 * s); G = Math.round(160 + 40 * s); B = 0; }
-        else if (t < 0.55) { const s = (t - 0.30) / 0.25; R = Math.round(140 + 115 * s); G = Math.round(200 + 30 * s); B = 0; }
-        else if (t < 0.75) { const s = (t - 0.55) / 0.20; R = 255; G = Math.round(230 - 150 * s); B = 0; }
-        else { const s = (t - 0.75) / 0.25; R = Math.round(255 - 15 * s); G = Math.round(80 - 80 * s); B = 0; }
-        ramp[v] = [R, G, B, A];
+        ramp[v] = [rgb[0], rgb[1], rgb[2], A];
       }
       return ramp;
     }
-    const _HM_RAMP = _hmRamp();
+    const _HM_CATEGORY_RAMPS = Object.fromEntries(
+      Object.entries(HM_CATEGORY_COLORS).map(([g, rgb]) => [g, _hmCategoryRamp(rgb)])
+    );
 
     function renderCamHeatmap(cam) {
       const imgEl    = document.getElementById(`hm-bg-${cam.camera_no}`);
@@ -758,11 +762,15 @@
 
         const F  = 4;
         const lW = Math.ceil(srcW / F), lH = Math.ceil(srcH / F);
-        const density = new Float32Array(lW * lH);
         const R  = Math.max(15, Math.round(lW / 30));
         const R2 = R * R;
 
+        const densities = { m: new Float32Array(lW * lH), f: new Float32Array(lW * lH), c: new Float32Array(lW * lH) };
+        const maxD = { m: 0, f: 0, c: 0 };
+
         for (const p of cam.points) {
+          const density = densities[p.g];
+          if (!density) continue;
           const cx = (p.x1 + p.x2) / 2 / F;
           const cy = (p.y1 + p.y2) / 2 / F;
           const x0 = Math.max(0,      Math.floor(cx - R));
@@ -775,36 +783,43 @@
               const d2 = dx * dx + dy * dy;
               if (d2 < R2) {
                 const w = 1 - d2 / R2;
-                density[y * lW + x] += w * w;
+                const idx = y * lW + x;
+                density[idx] += w * w;
+                if (density[idx] > maxD[p.g]) maxD[p.g] = density[idx];
               }
             }
           }
         }
 
-        let maxD = 0;
-        for (let i = 0; i < density.length; i++) if (density[i] > maxD) maxD = density[i];
-        if (maxD === 0) return;
-
-        const lowC = document.createElement('canvas');
-        lowC.width = lW; lowC.height = lH;
-        const lowCtx = lowC.getContext('2d');
-        const id = lowCtx.createImageData(lW, lH);
-        const d  = id.data;
-
-        for (let i = 0; i < density.length; i++) {
-          if (density[i] === 0) continue;
-          const val = Math.min(255, Math.round(Math.pow(density[i] / maxD, 0.45) * 255));
-          const col = _HM_RAMP[val];
-          const j = i * 4;
-          d[j] = col[0]; d[j + 1] = col[1]; d[j + 2] = col[2]; d[j + 3] = col[3];
-        }
-        lowCtx.putImageData(id, 0, 0);
-
         const ctx = canvasEl.getContext('2d');
         ctx.clearRect(0, 0, srcW, srcH);
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(lowC, 0, 0, srcW, srcH);
+        ctx.globalCompositeOperation = 'lighter';
+
+        for (const g of Object.keys(HM_CATEGORY_COLORS)) {
+          if (maxD[g] === 0) continue;
+          const density = densities[g];
+          const ramp = _HM_CATEGORY_RAMPS[g];
+
+          const lowC = document.createElement('canvas');
+          lowC.width = lW; lowC.height = lH;
+          const lowCtx = lowC.getContext('2d');
+          const id = lowCtx.createImageData(lW, lH);
+          const d  = id.data;
+
+          for (let i = 0; i < density.length; i++) {
+            if (density[i] === 0) continue;
+            const val = Math.min(255, Math.round(Math.pow(density[i] / maxD[g], 0.45) * 255));
+            const col = ramp[val];
+            const j = i * 4;
+            d[j] = col[0]; d[j + 1] = col[1]; d[j + 2] = col[2]; d[j + 3] = col[3];
+          }
+          lowCtx.putImageData(id, 0, 0);
+          ctx.drawImage(lowC, 0, 0, srcW, srcH);
+        }
+
+        ctx.globalCompositeOperation = 'source-over';
       };
 
       if (imgEl.complete && imgEl.naturalWidth > 0) doRender();
@@ -847,10 +862,10 @@
               <div style="font-size:17px;font-weight:800;color:#0f172a;margin-bottom:3px">Store Heatmap — Customer Movement Pattern</div>
               <div style="font-size:12.5px;color:#64748b">${cam.label} &nbsp;·&nbsp; ${cam.docs} snapshots</div>
             </div>
-            <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-              <span style="font-size:12px;font-weight:600;color:#475569">Low</span>
-              <div style="width:130px;height:12px;border-radius:6px;background:linear-gradient(to right,#14a040,#facc15,#f97316,#dc2626);box-shadow:0 1px 4px rgba(0,0,0,.1)"></div>
-              <span style="font-size:12px;font-weight:600;color:#475569">High</span>
+            <div style="display:flex;align-items:center;gap:14px;flex-shrink:0;flex-wrap:wrap">
+              <span style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:#475569"><span style="width:11px;height:11px;border-radius:50%;background:#22D3EE;display:inline-block;box-shadow:0 1px 3px rgba(0,0,0,.15)"></span>Male</span>
+              <span style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:#475569"><span style="width:11px;height:11px;border-radius:50%;background:#F472B6;display:inline-block;box-shadow:0 1px 3px rgba(0,0,0,.15)"></span>Female</span>
+              <span style="display:flex;align-items:center;gap:6px;font-size:12px;font-weight:600;color:#475569"><span style="width:11px;height:11px;border-radius:50%;background:#FACC15;display:inline-block;box-shadow:0 1px 3px rgba(0,0,0,.15)"></span>Child</span>
             </div>
           </div>
           <div style="display:flex;justify-content:center">
