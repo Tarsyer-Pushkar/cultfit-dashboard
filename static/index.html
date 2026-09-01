@@ -409,6 +409,7 @@
           <button class="export-btn" id="export-btn" onclick="handleExport()" title="Export data to CSV">⬇ Export CSV</button>
           <div class="quick-btns">
             <button class="quick-btn" data-quick="today">Today</button>
+            <button class="quick-btn" data-quick="yesterday">Yesterday</button>
             <button class="quick-btn active" data-quick="7d">7 Days</button>
             <button class="quick-btn" data-quick="30d">30 Days</button>
             <button class="quick-btn" data-quick="mtd">MTD</button>
@@ -1275,11 +1276,13 @@
       const today = new Date();
       const fmtD = d => d.toISOString().slice(0, 10);
       const s = new Date(today);
+      const e = new Date(today);
       if (q === 'today') { /* noop */ }
+      else if (q === 'yesterday') { s.setDate(today.getDate() - 1); e.setDate(today.getDate() - 1); }
       else if (q === '7d') { s.setDate(today.getDate() - 6); }
       else if (q === '30d') { s.setDate(today.getDate() - 29); }
       else if (q === 'mtd') { s.setDate(1); }
-      S.start = fmtD(s); S.end = fmtD(today);
+      S.start = fmtD(s); S.end = fmtD(e);
       document.getElementById('f-start').value = S.start;
       document.getElementById('f-end').value = S.end;
       updateFilterDisplay();
