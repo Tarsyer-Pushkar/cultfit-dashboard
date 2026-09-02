@@ -821,7 +821,7 @@ def cf_shopper_flow():
     db = _get_db()
     if db is None:
         return jsonify({'zone_traffic': {}, 'transitions': [], 'top_journeys': [],
-                         'total_unique': 0, 'db_connected': False})
+                         'total_journeys': 0, 'total_unique': 0, 'db_connected': False})
 
     try:
         collection = db['reid']
@@ -912,17 +912,28 @@ def cf_shopper_flow():
             for (f_zone, t_zone), cnt in sorted(transition_counts.items(), key=lambda x: x[1], reverse=True)
         ]
 
+        # `count` is the number of tracked individuals whose normalized path is
+        # exactly this string; `share` is that count as a fraction of ALL
+        # multi-zone journeys in the period (not just the top N shown here), so
+        # the list reads as a distribution rather than raw re-ID track counts.
+        total_journeys = sum(journey_counts.values())
+
         top_journeys = [
-            {'journey': journey, 'count': cnt}
+            {
+                'journey': journey,
+                'count':   cnt,
+                'share':   round(cnt / total_journeys, 4) if total_journeys else 0,
+            }
             for journey, cnt in sorted(journey_counts.items(), key=lambda x: x[1], reverse=True)[:SHOPPERFLOW_MAX_JOURNEYS]
         ]
 
         return jsonify({
-            'zone_traffic':  zone_traffic,
-            'transitions':   formatted_transitions,
-            'top_journeys':  top_journeys,
-            'total_unique':  total_unique,
-            'db_connected':  True,
+            'zone_traffic':    zone_traffic,
+            'transitions':     formatted_transitions,
+            'top_journeys':    top_journeys,
+            'total_journeys':  total_journeys,
+            'total_unique':    total_unique,
+            'db_connected':    True,
         })
 
     except Exception as exc:
