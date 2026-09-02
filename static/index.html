@@ -459,7 +459,6 @@
           </div>
 
           <div id="heatmap-content">
-            <div class="kpi-grid" id="kpi-heatmap" style="margin-bottom:18px"></div>
             <div id="hm-canvas-area"></div>
           </div>
         </div>
@@ -868,12 +867,10 @@
     }
 
     async function loadHeatmap() {
-      const kpiEl  = document.getElementById('kpi-heatmap');
       const areaEl = document.getElementById('hm-canvas-area');
 
       const cacheKey = `${S.start}_${S.end}_${S.store || 'all'}`;
 
-      if (kpiEl)  kpiEl.innerHTML = '';
       if (areaEl) areaEl.innerHTML = '<div class="loading-overlay" style="min-height:300px;display:flex;align-items:center;justify-content:center"><span class="spinner"></span> &nbsp; Loading heatmap data...</div>';
 
       let data = _hmDataCache[cacheKey];
@@ -884,43 +881,11 @@
       }
 
       if (!data) {
-        if (kpiEl) kpiEl.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><div class="empty-icon">🔌</div><p>Database unavailable</p></div>`;
-        if (areaEl) areaEl.innerHTML = '';
+        if (areaEl) areaEl.innerHTML = `<div class="empty-state"><div class="empty-icon">🔌</div><p>Database unavailable</p></div>`;
         return;
       }
 
       const cameras = data.cameras || [];
-
-      if (kpiEl) {
-        const male = data.male || 0, female = data.female || 0, child = data.child || 0;
-        // Children counted by the sensor can't be reliably split by gender, so
-        // redistribute them into male/female rather than showing a separate
-        // (and less actionable) "Children" KPI. The split blends this camera's
-        // own male:female ratio (so a store that skews male doesn't get forced
-        // to a flat split) with a general female-leaning bias, since children
-        // are more often accompanied by/counted with women in-store.
-        const mfTotal = male + female;
-        const dataFemaleShare = mfTotal > 0 ? female / mfTotal : 0.5;
-        const BIAS_FEMALE_SHARE = 0.7;
-        const BIAS_WEIGHT = 0.4; // 0 = pure data ratio, 1 = pure 70/30 bias
-        const childFemaleShare = dataFemaleShare * (1 - BIAS_WEIGHT) + BIAS_FEMALE_SHARE * BIAS_WEIGHT;
-        const adjMale = male + child * (1 - childFemaleShare);
-        const adjFemale = female + child * childFemaleShare;
-        const hmTotal = adjMale + adjFemale;
-        let mPct = 0, fPct = 0;
-        if (hmTotal > 0) {
-          mPct = Math.round((adjMale / hmTotal) * 100);
-          fPct = 100 - mPct;
-        }
-        kpiEl.innerHTML = [
-          { icon: '&#128104;', label: 'Male', value: mPct + '%' },
-          { icon: '&#128105;', label: 'Female', value: fPct + '%' },
-        ].map(k => `<div class="kpi-card">
-          <span class="kpi-icon">${k.icon}</span>
-          <div class="kpi-label">${k.label}</div>
-          <div class="kpi-value" style="font-size:${String(k.value).length > 6 ? '18px' : '28px'}">${k.value}</div>
-        </div>`).join('');
-      }
 
       if (!areaEl) return;
 
