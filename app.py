@@ -1026,6 +1026,71 @@ def cf_gate_activity():
         print(f"[DB] Gate activity query error: {exc}")
         return jsonify({'error': 'Database query failed', 'detail': str(exc)}), 503
 
+# ─── Staff Presence (footfall collection — camera_no 3) ──────────────────────
+# camera_no 3 points at the staff area; it logs one hourly snapshot whose
+# `count_male` is the number of staff seen that hour (the other count_* /
+# opp_count_* fields are unused on this camera). Presented as a date x hour
+# grid: one row per store/day, one column per hour that appears anywhere in
+# the range, cell = staff count for that hour.
+@app.route('/api/cultfit/staff-presence')
+@require_login
+def cf_staff_presence():
+    start_dt, end_dt, end_dt_inclusive, store = _parse_range()
+
+    db = _get_db()
+    if db is None:
+        return jsonify({'hours': [], 'rows': [], 'db_connected': False})
+
+    try:
+        collection = db['footfall']
+        match_filter = {
+            'project_name': PROJECT_NAME,
+            'camera_no': 3,
+            'date_time': {
+                '$gte': start_dt.strftime('%Y-%m-%d %H:%M:%S'),
+                '$lt':  end_dt_inclusive.strftime('%Y-%m-%d %H:%M:%S'),
+            }
+        }
+        if store:
+            match_filter['store_code'] = store
+
+        pipeline = [
+            {'$match': match_filter},
+            {'$group': {
+                '_id': {
+                    'date': {'$substr': ['$date_time', 0, 10]},
+                    'hour': {'$substr': ['$date_time', 11, 2]},
+                    'store': '$store_code',
+                },
+                'staff': {'$sum': {'$ifNull': ['$count_male', 0]}},
+            }},
+        ]
+
+        grid = {}                 # (store, date) -> {hour_label: staff}
+        hours_seen = set()
+        for r in collection.aggregate(pipeline):
+            key = (r['_id']['store'], r['_id']['date'])
+            hour_label = f"{r['_id']['hour']}:00"
+            hours_seen.add(hour_label)
+            grid.setdefault(key, {})[hour_label] = r['staff']
+
+        hours = sorted(hours_seen)
+        rows = []
+        for (store_code, date_only), by_hour in grid.items():
+            rows.append({
+                'date':    date_only,
+                'store':   store_code,
+                'by_hour': by_hour,
+                'total':   sum(by_hour.values()),
+            })
+        rows.sort(key=lambda r: (r['date'], r['store']), reverse=True)
+
+        return jsonify({'hours': hours, 'rows': rows, 'db_connected': True})
+
+    except Exception as exc:
+        print(f"[DB] Staff presence query error: {exc}")
+        return jsonify({'error': 'Database query failed', 'detail': str(exc)}), 503
+
 # ─── Static / SPA ─────────────────────────────────────────────────────────────
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>')

@@ -460,6 +460,19 @@
 
           <div id="heatmap-content">
             <div id="hm-canvas-area"></div>
+
+            <div class="chart-card full" style="padding:0;overflow:hidden;margin-top:18px">
+              <div style="padding:16px 18px 0">
+                <div class="chart-title">Staff Presence</div>
+                <div class="chart-subtitle">Staff seen per hour in the staff area (camera 3)</div>
+              </div>
+              <div style="overflow-x:auto;margin-top:14px">
+                <table class="gate-table" id="staff-presence-table">
+                  <thead id="staff-presence-head"></thead>
+                  <tbody id="staff-presence-tbody"></tbody>
+                </table>
+              </div>
+            </div>
           </div>
         </div>
 
@@ -893,6 +906,70 @@
       hmRenderArea();
     }
 
+    async function loadStaffPresence() {
+      const head  = document.getElementById('staff-presence-head');
+      const tbody = document.getElementById('staff-presence-tbody');
+      if (!head || !tbody) return;
+
+      head.innerHTML = '';
+      tbody.innerHTML = `<tr><td><div class="loading-overlay"><span class="spinner"></span> Loading...</div></td></tr>`;
+
+      const d = await apiRaw('/cultfit/staff-presence');
+      const hours = (d && d.hours) || [];
+
+      if (!d || !d.rows || !d.rows.length) {
+        tbody.innerHTML = `<tr><td><div class="empty-state"><div class="empty-icon">🧑‍💼</div><p>No staff presence data for the selected period</p></div></td></tr>`;
+        return;
+      }
+
+      // A single day shows that day's hourly counts; a multi-day range collapses
+      // to one row of per-hour averages (mean over the days that reported that
+      // hour), so the table stays readable as the range widens.
+      const multiDay = S.start !== S.end;
+      const fmtNum = n => multiDay ? (Math.round(n * 10) / 10).toFixed(1) : String(n);
+
+      let displayRows;
+      if (multiDay) {
+        const sums = {}, cnts = {};
+        let totalSum = 0;
+        d.rows.forEach(r => {
+          hours.forEach(h => {
+            const v = r.by_hour[h];
+            if (typeof v === 'number') { sums[h] = (sums[h] || 0) + v; cnts[h] = (cnts[h] || 0) + 1; }
+          });
+          totalSum += r.total;
+        });
+        const avgByHour = {};
+        hours.forEach(h => { if (cnts[h]) avgByHour[h] = sums[h] / cnts[h]; });
+        displayRows = [{
+          label: `Average · ${d.rows.length} day${d.rows.length === 1 ? '' : 's'}`,
+          by_hour: avgByHour,
+          total: totalSum / d.rows.length,
+        }];
+      } else {
+        displayRows = d.rows.map(r => ({ label: fmtDateLabel(r.date), by_hour: r.by_hour, total: r.total }));
+      }
+
+      head.innerHTML = `<tr><th>${multiDay ? 'Period' : 'Date'}</th>${hours.map(h => `<th style="text-align:center">${h}</th>`).join('')}<th style="text-align:center">Total</th></tr>`;
+
+      let peak = 0;
+      displayRows.forEach(r => hours.forEach(h => {
+        const v = r.by_hour[h];
+        if (typeof v === 'number' && v > peak) peak = v;
+      }));
+
+      tbody.innerHTML = displayRows.map(r => {
+        const cells = hours.map(h => {
+          const v = r.by_hour[h];
+          if (typeof v !== 'number') return `<td style="text-align:center;color:var(--text-muted)">&mdash;</td>`;
+          const ratio = peak > 0 ? v / peak : 0;
+          const bg = `rgba(37,99,235,${(0.05 + ratio * 0.33).toFixed(3)})`;
+          return `<td style="text-align:center;font-weight:600;background:${bg}">${fmtNum(v)}</td>`;
+        }).join('');
+        return `<tr><td style="font-weight:600;white-space:nowrap;color:var(--text)">${r.label}</td>${cells}<td style="text-align:center;font-weight:700">${fmtNum(r.total)}</td></tr>`;
+      }).join('');
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // SHOPPER FLOW — reid collection, floor-plan 2D map (zone traffic + flow)
     // ─────────────────────────────────────────────────────────────────────────
@@ -1312,7 +1389,7 @@
         const storeSelected = S.store && S.store !== 'all';
         if (promptEl)  promptEl.style.display  = storeSelected ? 'none' : '';
         if (contentEl) contentEl.style.display = storeSelected ? '' : 'none';
-        if (storeSelected) { await loadHeatmap(); }
+        if (storeSelected) { await loadHeatmap(); await loadStaffPresence(); }
       } else if (S.view === 'shopperflow') {
         const promptEl  = document.getElementById('shopperflow-select-store-prompt');
         const contentEl = document.getElementById('shopperflow-content');
