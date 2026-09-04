@@ -270,6 +270,7 @@ def _footfall_exprs(category):
             {'$ifNull': ['$count_male', 0]},
             {'$ifNull': ['$count_child', 0]},
         ]}
+        staff_expr = {'$ifNull': ['$count_staff', 0]}
     else:
         # passerby: male = count_male + opp_count_male (count_child excluded)
         #           female = count_female + opp_count_female + count_staff + opp_count_staff
@@ -283,7 +284,11 @@ def _footfall_exprs(category):
             {'$ifNull': ['$count_staff', 0]},
             {'$ifNull': ['$opp_count_staff', 0]},
         ]}
-    return male_expr, female_expr
+        staff_expr = {'$add': [
+            {'$ifNull': ['$count_staff', 0]},
+            {'$ifNull': ['$opp_count_staff', 0]},
+        ]}
+    return male_expr, female_expr, staff_expr
 
 @app.route('/api/cultfit/footfall')
 @require_login
@@ -295,7 +300,7 @@ def cf_footfall():
     db = _get_db()
     if db is None:
         return jsonify({
-            'total': 0, 'men': 0, 'women': 0,
+            'total': 0, 'men': 0, 'women': 0, 'staff': 0,
             'hourly': [], 'daily': [], 'by_store': [],
             'db_connected': False,
         })
@@ -315,7 +320,7 @@ def cf_footfall():
         if store:
             match_filter['store_code'] = store
 
-        male_expr, female_expr = _footfall_exprs(category)
+        male_expr, female_expr, staff_expr = _footfall_exprs(category)
 
         # Hourly aggregation
         hourly_pipeline = [
@@ -324,16 +329,19 @@ def cf_footfall():
                 'hour_str': {'$substr': ['$date_time', 11, 2]},
                 'male_v':   male_expr,
                 'female_v': female_expr,
+                'staff_v':  staff_expr,
             }},
             {'$group': {
                 '_id':    '$hour_str',
                 'male':   {'$sum': '$male_v'},
                 'female': {'$sum': '$female_v'},
+                'staff':  {'$sum': '$staff_v'},
             }},
             {'$sort': {'_id': 1}},
         ]
         hourly = [
-            {'hour': f"{r['_id']}:00", 'male': r['male'], 'female': r['female'], 'total': r['male'] + r['female']}
+            {'hour': f"{r['_id']}:00", 'male': r['male'], 'female': r['female'],
+             'staff': r['staff'], 'total': r['male'] + r['female']}
             for r in collection.aggregate(hourly_pipeline)
         ]
 
@@ -353,16 +361,19 @@ def cf_footfall():
                 'date_only': {'$substr': ['$date_time', 0, 10]},
                 'male_v':    male_expr,
                 'female_v':  female_expr,
+                'staff_v':   staff_expr,
             }},
             {'$group': {
                 '_id':    '$date_only',
                 'male':   {'$sum': '$male_v'},
                 'female': {'$sum': '$female_v'},
+                'staff':  {'$sum': '$staff_v'},
             }},
             {'$sort': {'_id': 1}},
         ]
         daily = [
-            {'date': r['_id'], 'male': r['male'], 'female': r['female'], 'total': r['male'] + r['female']}
+            {'date': r['_id'], 'male': r['male'], 'female': r['female'],
+             'staff': r['staff'], 'total': r['male'] + r['female']}
             for r in collection.aggregate(daily_pipeline)
         ]
 
@@ -380,12 +391,14 @@ def cf_footfall():
 
         total_male   = sum(r['male']   for r in daily)
         total_female = sum(r['female'] for r in daily)
+        total_staff  = sum(r['staff']  for r in daily)
 
         return jsonify({
             'category': category,
             'total':    total_male + total_female,
             'men':      total_male,
             'women':    total_female,
+            'staff':    total_staff,
             'hourly':   hourly,
             'daily':    daily,
             'by_store': by_store,
@@ -406,7 +419,7 @@ def export_footfall():
 
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(['Date', 'Store', 'Male', 'Female', 'Total'])
+    writer.writerow(['Date', 'Store', 'Male', 'Female', 'Staff', 'Total'])
 
     if db is not None:
         collection = db['footfall']
@@ -422,7 +435,7 @@ def export_footfall():
         if store:
             match_filter['store_code'] = store
 
-        male_expr, female_expr = _footfall_exprs(category)
+        male_expr, female_expr, staff_expr = _footfall_exprs(category)
 
         pipeline = [
             {'$match': match_filter},
@@ -430,17 +443,19 @@ def export_footfall():
                 'date_only': {'$substr': ['$date_time', 0, 10]},
                 'male_v':    male_expr,
                 'female_v':  female_expr,
+                'staff_v':   staff_expr,
             }},
             {'$group': {
                 '_id':    {'date': '$date_only', 'store': '$store_code'},
                 'male':   {'$sum': '$male_v'},
                 'female': {'$sum': '$female_v'},
+                'staff':  {'$sum': '$staff_v'},
             }},
             {'$sort': {'_id.date': 1, '_id.store': 1}},
         ]
         for row in collection.aggregate(pipeline):
-            m, f = row.get('male', 0), row.get('female', 0)
-            writer.writerow([row['_id'].get('date', 'Unknown'), row['_id'].get('store', 'Unknown'), m, f, m + f])
+            m, f, s = row.get('male', 0), row.get('female', 0), row.get('staff', 0)
+            writer.writerow([row['_id'].get('date', 'Unknown'), row['_id'].get('store', 'Unknown'), m, f, s, m + f])
 
     response = Response(output.getvalue(), mimetype='text/csv')
     store_label = store if store else 'AllStores'

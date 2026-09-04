@@ -527,10 +527,12 @@
     const TH_TOTAL = '#EF4444'; const TH_TOTAL_BG = 'rgba(239, 68, 68, 0.1)';
     const TH_MALE = '#3B82F6'; const TH_MALE_BG = 'rgba(59, 130, 246, 0.1)';
     const TH_FEMALE = '#10B981'; const TH_FEMALE_BG = 'rgba(16, 185, 129, 0.1)';
+    const TH_STAFF = '#8B5CF6'; const TH_STAFF_BG = 'rgba(139, 92, 246, 0.1)';
 
     const ICON_MALE = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${TH_MALE}" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
     const ICON_FEMALE = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${TH_FEMALE}" stroke-width="2.5"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
     const ICON_TOTAL = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${TH_TOTAL}" stroke-width="2.5"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>`;
+    const ICON_STAFF = `<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="${TH_STAFF}" stroke-width="2.5"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><rect x="16" y="3" width="6" height="6" rx="1"/></svg>`;
 
     function destroyChart(id) { if (S.charts[id]) { S.charts[id].destroy(); delete S.charts[id]; } }
     function makeChart(id, config) {
@@ -687,6 +689,9 @@
             { label: 'Total',  data: rows.map(r => r.total),  borderColor: TH_TOTAL,  backgroundColor: TH_TOTAL_BG,  tension: 0.4, fill: true,  pointRadius: 4, pointHoverRadius: 6, borderWidth: 2.5 },
             { label: 'Male',   data: rows.map(r => r.male),   borderColor: TH_MALE,   backgroundColor: TH_MALE_BG,   tension: 0.4, fill: false, pointRadius: 3, pointHoverRadius: 5, borderWidth: 2 },
             { label: 'Female', data: rows.map(r => r.female), borderColor: TH_FEMALE, backgroundColor: TH_FEMALE_BG, tension: 0.4, fill: false, pointRadius: 3, pointHoverRadius: 5, borderWidth: 2 },
+            ...(_ffCategory === 'footfall'
+              ? [{ label: 'Staff', data: rows.map(r => r.staff || 0), borderColor: TH_STAFF, backgroundColor: TH_STAFF_BG, tension: 0.4, fill: false, pointRadius: 3, pointHoverRadius: 5, borderWidth: 2, borderDash: [5, 4] }]
+              : []),
           ],
         },
         options: {
@@ -721,6 +726,7 @@
         ${kpi('Total ' + catLabel, total.toLocaleString(), 'selected period total', ICON_TOTAL)}
         ${kpi('Men',   d.men.toLocaleString(),   menPct + '% of total', ICON_MALE)}
         ${kpi('Women', d.women.toLocaleString(), womPct + '% of total', ICON_FEMALE)}
+        ${_ffCategory === 'footfall' ? kpi('Staff', (d.staff || 0).toLocaleString(), 'staff detections', ICON_STAFF) : ''}
       `;
 
       ffRenderMainChart(d);
@@ -926,31 +932,30 @@
       // to one row of per-hour averages (mean over the days that reported that
       // hour), so the table stays readable as the range widens.
       const multiDay = S.start !== S.end;
-      const fmtNum = n => multiDay ? (Math.round(n * 10) / 10).toFixed(1) : String(n);
+      // Multi-day cells are per-hour averages rounded to whole numbers (no
+      // decimals); single-day cells are the raw hourly counts.
+      const fmtNum = n => multiDay ? String(Math.round(n)) : String(n);
 
       let displayRows;
       if (multiDay) {
         const sums = {}, cnts = {};
-        let totalSum = 0;
         d.rows.forEach(r => {
           hours.forEach(h => {
             const v = r.by_hour[h];
             if (typeof v === 'number') { sums[h] = (sums[h] || 0) + v; cnts[h] = (cnts[h] || 0) + 1; }
           });
-          totalSum += r.total;
         });
         const avgByHour = {};
         hours.forEach(h => { if (cnts[h]) avgByHour[h] = sums[h] / cnts[h]; });
         displayRows = [{
           label: `Average · ${d.rows.length} day${d.rows.length === 1 ? '' : 's'}`,
           by_hour: avgByHour,
-          total: totalSum / d.rows.length,
         }];
       } else {
-        displayRows = d.rows.map(r => ({ label: fmtDateLabel(r.date), by_hour: r.by_hour, total: r.total }));
+        displayRows = d.rows.map(r => ({ label: fmtDateLabel(r.date), by_hour: r.by_hour }));
       }
 
-      head.innerHTML = `<tr><th>${multiDay ? 'Period' : 'Date'}</th>${hours.map(h => `<th style="text-align:center">${h}</th>`).join('')}<th style="text-align:center">Total</th></tr>`;
+      head.innerHTML = `<tr><th>${multiDay ? 'Period' : 'Date'}</th>${hours.map(h => `<th style="text-align:center">${h}</th>`).join('')}</tr>`;
 
       let peak = 0;
       displayRows.forEach(r => hours.forEach(h => {
@@ -966,7 +971,7 @@
           const bg = `rgba(37,99,235,${(0.05 + ratio * 0.33).toFixed(3)})`;
           return `<td style="text-align:center;font-weight:600;background:${bg}">${fmtNum(v)}</td>`;
         }).join('');
-        return `<tr><td style="font-weight:600;white-space:nowrap;color:var(--text)">${r.label}</td>${cells}<td style="text-align:center;font-weight:700">${fmtNum(r.total)}</td></tr>`;
+        return `<tr><td style="font-weight:600;white-space:nowrap;color:var(--text)">${r.label}</td>${cells}</tr>`;
       }).join('');
     }
 
