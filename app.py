@@ -341,7 +341,8 @@ def cf_footfall():
         ]
         hourly = [
             {'hour': f"{r['_id']}:00", 'male': r['male'], 'female': r['female'],
-             'staff': r['staff'], 'total': r['male'] + r['female']}
+             'staff': r['staff'],
+             'total': r['male'] + r['female'] + (r['staff'] if category == 'footfall' else 0)}
             for r in collection.aggregate(hourly_pipeline)
         ]
 
@@ -373,17 +374,19 @@ def cf_footfall():
         ]
         daily = [
             {'date': r['_id'], 'male': r['male'], 'female': r['female'],
-             'staff': r['staff'], 'total': r['male'] + r['female']}
+             'staff': r['staff'],
+             'total': r['male'] + r['female'] + (r['staff'] if category == 'footfall' else 0)}
             for r in collection.aggregate(daily_pipeline)
         ]
 
         # By-store aggregation
+        store_total_fields = ['$male_v', '$female_v', '$staff_v'] if category == 'footfall' else ['$male_v', '$female_v']
         store_pipeline = [
             {'$match': match_filter},
-            {'$addFields': {'male_v': male_expr, 'female_v': female_expr}},
+            {'$addFields': {'male_v': male_expr, 'female_v': female_expr, 'staff_v': staff_expr}},
             {'$group': {
                 '_id':   '$store_code',
-                'total': {'$sum': {'$add': ['$male_v', '$female_v']}},
+                'total': {'$sum': {'$add': store_total_fields}},
             }},
             {'$sort': {'total': -1}},
         ]
@@ -395,7 +398,7 @@ def cf_footfall():
 
         return jsonify({
             'category': category,
-            'total':    total_male + total_female,
+            'total':    total_male + total_female + (total_staff if category == 'footfall' else 0),
             'men':      total_male,
             'women':    total_female,
             'staff':    total_staff,
@@ -455,7 +458,8 @@ def export_footfall():
         ]
         for row in collection.aggregate(pipeline):
             m, f, s = row.get('male', 0), row.get('female', 0), row.get('staff', 0)
-            writer.writerow([row['_id'].get('date', 'Unknown'), row['_id'].get('store', 'Unknown'), m, f, s, m + f])
+            total = m + f + s if category == 'footfall' else m + f
+            writer.writerow([row['_id'].get('date', 'Unknown'), row['_id'].get('store', 'Unknown'), m, f, s, total])
 
     response = Response(output.getvalue(), mimetype='text/csv')
     store_label = store if store else 'AllStores'
