@@ -674,9 +674,9 @@ def cf_heatmap():
             # is dwell-weighted (every non-staff box in every snapshot whose
             # centroid lands inside the polygon adds 1); it is then divided by
             # SNAPSHOTS_PER_DETECTION so the displayed number reads as
-            # "person-presence units" — 100 snapshots' worth of a person in the
+            # "person-presence units" — 10 snapshots' worth of a person in the
             # aisle == 1.
-            SNAPSHOTS_PER_DETECTION = 100
+            SNAPSHOTS_PER_DETECTION = 10
             alt_poly = _get_roi_alt_polygon(store, camera_no)
             alt_view = None
             if alt_poly is not None:
