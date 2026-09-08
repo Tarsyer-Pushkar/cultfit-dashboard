@@ -670,10 +670,13 @@ def cf_heatmap():
             # ── Alternate ROI representation (heatmap sub-tab) ──────────────
             # Independent second pass over the same snapshot docs, scoped to a
             # separate polygon from roi_alt_config.json. Staff are excluded
-            # from both the drawn blobs and the detection count. The count is
-            # dwell-weighted: every male/female/child box in every snapshot
-            # whose centroid lands inside the polygon adds 1 (a person present
-            # across 10 snapshots contributes 10).
+            # from both the drawn blobs and the detection count. The raw count
+            # is dwell-weighted (every non-staff box in every snapshot whose
+            # centroid lands inside the polygon adds 1); it is then divided by
+            # SNAPSHOTS_PER_DETECTION so the displayed number reads as
+            # "person-presence units" — 100 snapshots' worth of a person in the
+            # aisle == 1.
+            SNAPSHOTS_PER_DETECTION = 100
             alt_poly = _get_roi_alt_polygon(store, camera_no)
             alt_view = None
             if alt_poly is not None:
@@ -708,7 +711,7 @@ def cf_heatmap():
                     'label':           'Aisle ROI',
                     'roi':             [{'x': x, 'y': y} for (x, y) in alt_poly],
                     'points':          alt_points,
-                    'detection_count': alt_count,
+                    'detection_count': round(alt_count / SNAPSHOTS_PER_DETECTION),
                 }
 
             cameras_result.append({

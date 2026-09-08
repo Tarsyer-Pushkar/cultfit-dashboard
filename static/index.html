@@ -862,26 +862,15 @@
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
 
-        const roiPath = () => {
+        if (roi && roi.length > 2) {
+          // Clip the density to the polygon; the boundary itself is not drawn.
+          ctx.save();
           ctx.beginPath();
           ctx.moveTo(roi[0].x, roi[0].y);
           for (let k = 1; k < roi.length; k++) ctx.lineTo(roi[k].x, roi[k].y);
           ctx.closePath();
-        };
-
-        if (roi && roi.length > 2) {
-          ctx.save();
-          roiPath();
           ctx.clip();
           ctx.drawImage(lowC, 0, 0, srcW, srcH);
-          ctx.restore();
-
-          ctx.save();
-          roiPath();
-          ctx.lineJoin = 'round';
-          ctx.lineWidth = Math.max(2, srcW / 320);
-          ctx.strokeStyle = 'rgba(249,115,22,.95)';
-          ctx.stroke();
           ctx.restore();
         } else {
           ctx.drawImage(lowC, 0, 0, srcW, srcH);
@@ -941,8 +930,8 @@
 
       const title    = isAlt ? 'Aisle Concentration Heatmap' : 'Store Heatmap — Customer Movement Pattern';
       const subtitle = isAlt
-        ? `${cam.label} &nbsp;·&nbsp; Aisle ROI &nbsp;·&nbsp; ${cam.docs} snapshots`
-        : `${cam.label} &nbsp;·&nbsp; ${cam.docs} snapshots`;
+        ? `${cam.label} &nbsp;·&nbsp; Aisle ROI`
+        : `${cam.label}`;
 
       const headerRight = isAlt
         ? `<div style="text-align:right;flex-shrink:0">
