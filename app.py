@@ -495,6 +495,30 @@ def _get_roi_polygon(store, camera_no):
         return None
     return [(p['x'], p['y']) for p in poly]
 
+# ─── Alternate (secondary) ROI config ────────────────────────────────────────
+# roi_alt_config.json has the SAME shape as roi_config.json but drives an
+# extra, independent representation rendered as a sub-tab in the heatmap view
+# (currently: Cultfit-HSR / camera 5 "Aisle ROI"). It never touches the main
+# per-camera heatmap — the primary tab keeps using roi_config.json unchanged.
+_ROI_ALT_CONFIG_FILE = os.path.join(os.path.dirname(__file__), 'roi_alt_config.json')
+
+def _load_roi_alt_config():
+    try:
+        with open(_ROI_ALT_CONFIG_FILE, 'r') as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+def _get_roi_alt_polygon(store, camera_no):
+    store_cfg = _load_roi_alt_config().get(store)
+    if not store_cfg:
+        return None
+    poly = store_cfg.get(str(camera_no))
+    if not poly:
+        return None
+    return [(p['x'], p['y']) for p in poly]
+
 def _point_in_polygon(x, y, poly):
     """Ray-casting point-in-polygon test; poly is a list of (x, y) vertices."""
     inside = False
@@ -643,6 +667,50 @@ def cf_heatmap():
                 import random
                 points = random.sample(points, 4000)
 
+            # ── Alternate ROI representation (heatmap sub-tab) ──────────────
+            # Independent second pass over the same snapshot docs, scoped to a
+            # separate polygon from roi_alt_config.json. Staff are excluded
+            # from both the drawn blobs and the detection count. The count is
+            # dwell-weighted: every male/female/child box in every snapshot
+            # whose centroid lands inside the polygon adds 1 (a person present
+            # across 10 snapshots contributes 10).
+            alt_poly = _get_roi_alt_polygon(store, camera_no)
+            alt_view = None
+            if alt_poly is not None:
+                alt_points = []
+                alt_count = 0
+                for doc in docs:
+                    bboxes = doc.get('person_bbox_list', {}) or {}
+                    for gender in ('male', 'female', 'child'):
+                        boxes = bboxes.get(gender)
+                        if not isinstance(boxes, list):
+                            continue
+                        kept = 0
+                        for box in boxes:
+                            if not (isinstance(box, (list, tuple)) and len(box) == 4):
+                                continue
+                            cx = (box[0] + box[2]) / 2.0
+                            cy = (box[1] + box[3]) / 2.0
+                            if not _point_in_polygon(cx, cy, alt_poly):
+                                continue
+                            alt_count += 1
+                            if kept < 40:
+                                alt_points.append({
+                                    'x1': box[0], 'y1': box[1],
+                                    'x2': box[2], 'y2': box[3],
+                                    'g': gender[0],
+                                })
+                                kept += 1
+                if len(alt_points) > 4000:
+                    import random
+                    alt_points = random.sample(alt_points, 4000)
+                alt_view = {
+                    'label':           'Aisle ROI',
+                    'roi':             [{'x': x, 'y': y} for (x, y) in alt_poly],
+                    'points':          alt_points,
+                    'detection_count': alt_count,
+                }
+
             cameras_result.append({
                 'camera_no':     camera_no,
                 'label':         f'Camera {camera_no}',
@@ -654,6 +722,7 @@ def cf_heatmap():
                 'child':         agg['child'],
                 'staff':         agg['staff'],
                 'points':        points,
+                'alt_view':      alt_view,
             })
 
             totals['docs']   += agg['docs']

@@ -759,10 +759,48 @@
     }
     const _HM_RAMP = _hmRamp();
 
-    function renderCamHeatmap(cam) {
+    // Blue→cyan→green→yellow→orange→red ramp for the ROI sub-tab, matching the
+    // reference concentration-heatmap look (cool low end, hot core).
+    function _hmRampBlue() {
+      const stops = [
+        [0.00, [ 20,  40, 180]],
+        [0.20, [ 10, 120, 220]],
+        [0.38, [ 15, 190, 180]],
+        [0.52, [ 45, 205,  95]],
+        [0.66, [235, 220,  40]],
+        [0.82, [245, 140,  25]],
+        [1.00, [220,  35,  25]],
+      ];
+      const ramp = new Array(256);
+      for (let v = 0; v < 256; v++) {
+        if (v === 0) { ramp[v] = [0, 0, 0, 0]; continue; }
+        const t = v / 255;
+        let a = stops[0], b = stops[stops.length - 1];
+        for (let i = 0; i < stops.length - 1; i++) {
+          if (t >= stops[i][0] && t <= stops[i + 1][0]) { a = stops[i]; b = stops[i + 1]; break; }
+        }
+        const s = (t - a[0]) / ((b[0] - a[0]) || 1);
+        ramp[v] = [
+          Math.round(a[1][0] + (b[1][0] - a[1][0]) * s),
+          Math.round(a[1][1] + (b[1][1] - a[1][1]) * s),
+          Math.round(a[1][2] + (b[1][2] - a[1][2]) * s),
+          Math.round(70 + t * 160),
+        ];
+      }
+      return ramp;
+    }
+    const _HM_RAMP_BLUE = _hmRampBlue();
+
+    // opts (optional): { points, roi, ramp } — when given, the density is built
+    // from opts.points, painted clipped to the opts.roi polygon (with its
+    // outline stroked on top), using opts.ramp. Omitted → original behaviour.
+    function renderCamHeatmap(cam, opts) {
       const imgEl    = document.getElementById(`hm-bg-${cam.camera_no}`);
       const canvasEl = document.getElementById(`hm-canvas-${cam.camera_no}`);
-      if (!imgEl || !canvasEl || !cam.points || !cam.points.length) return;
+      const pts  = (opts && opts.points) || cam.points;
+      const roi  = opts && opts.roi;
+      const RAMP = (opts && opts.ramp) || _HM_RAMP;
+      if (!imgEl || !canvasEl || !pts || !pts.length) return;
 
       // Canvas is sized to the image's own natural resolution (no forced
       // aspect ratio, no letterboxing) and bbox coordinates are plotted
@@ -781,7 +819,7 @@
         const R  = Math.max(15, Math.round(lW / 30));
         const R2 = R * R;
 
-        for (const p of cam.points) {
+        for (const p of pts) {
           const cx = (p.x1 + p.x2) / 2 / F;
           const cy = (p.y1 + p.y2) / 2 / F;
           const x0 = Math.max(0,      Math.floor(cx - R));
@@ -813,7 +851,7 @@
         for (let i = 0; i < density.length; i++) {
           if (density[i] === 0) continue;
           const val = Math.min(255, Math.round(Math.pow(density[i] / maxD, 0.45) * 255));
-          const col = _HM_RAMP[val];
+          const col = RAMP[val];
           const j = i * 4;
           d[j] = col[0]; d[j + 1] = col[1]; d[j + 2] = col[2]; d[j + 3] = col[3];
         }
@@ -823,7 +861,31 @@
         ctx.clearRect(0, 0, srcW, srcH);
         ctx.imageSmoothingEnabled = true;
         ctx.imageSmoothingQuality = 'high';
-        ctx.drawImage(lowC, 0, 0, srcW, srcH);
+
+        const roiPath = () => {
+          ctx.beginPath();
+          ctx.moveTo(roi[0].x, roi[0].y);
+          for (let k = 1; k < roi.length; k++) ctx.lineTo(roi[k].x, roi[k].y);
+          ctx.closePath();
+        };
+
+        if (roi && roi.length > 2) {
+          ctx.save();
+          roiPath();
+          ctx.clip();
+          ctx.drawImage(lowC, 0, 0, srcW, srcH);
+          ctx.restore();
+
+          ctx.save();
+          roiPath();
+          ctx.lineJoin = 'round';
+          ctx.lineWidth = Math.max(2, srcW / 320);
+          ctx.strokeStyle = 'rgba(249,115,22,.95)';
+          ctx.stroke();
+          ctx.restore();
+        } else {
+          ctx.drawImage(lowC, 0, 0, srcW, srcH);
+        }
       };
 
       if (imgEl.complete && imgEl.naturalWidth > 0) doRender();
@@ -833,9 +895,16 @@
     let _hmDataCache = {};
     let _hmCameras = [];
     let _hmSelectedCam = null;
+    let _hmSubView = 'main';   // 'main' | 'alt' — inner tab for cameras with an alt_view
 
     function hmSelectCamera(camNo) {
       _hmSelectedCam = camNo;
+      _hmSubView = 'main';
+      hmRenderArea();
+    }
+
+    function hmSelectSubView(v) {
+      _hmSubView = v;
       hmRenderArea();
     }
 
@@ -853,24 +922,48 @@
       }
       const cam = _hmCameras.find(c => c.camera_no === _hmSelectedCam);
 
+      const hasAlt  = !!cam.alt_view;
+      const subView = hasAlt ? _hmSubView : 'main';
+      const isAlt   = subView === 'alt';
+
       const tabsHtml = _hmCameras.length > 1
         ? `<div class="cat-tabs" style="margin-bottom:16px">
             ${_hmCameras.map(c => `<button class="cat-tab ${c.camera_no === _hmSelectedCam ? 'active' : ''}" onclick="hmSelectCamera(${c.camera_no})">${c.label}</button>`).join('')}
           </div>`
         : '';
 
+      const subTabsHtml = hasAlt
+        ? `<div class="cat-tabs" style="margin-bottom:14px">
+            <button class="cat-tab ${!isAlt ? 'active' : ''}" onclick="hmSelectSubView('main')">Movement Pattern</button>
+            <button class="cat-tab ${isAlt ? 'active' : ''}" onclick="hmSelectSubView('alt')">Aisle ROI</button>
+          </div>`
+        : '';
+
+      const title    = isAlt ? 'Aisle Concentration Heatmap' : 'Store Heatmap — Customer Movement Pattern';
+      const subtitle = isAlt
+        ? `${cam.label} &nbsp;·&nbsp; Aisle ROI &nbsp;·&nbsp; ${cam.docs} snapshots`
+        : `${cam.label} &nbsp;·&nbsp; ${cam.docs} snapshots`;
+
+      const headerRight = isAlt
+        ? `<div style="text-align:right;flex-shrink:0">
+             <div style="font-size:11px;font-weight:700;color:#64748b;text-transform:uppercase;letter-spacing:.05em">Detections in ROI</div>
+             <div style="font-size:24px;font-weight:800;color:#0f172a;line-height:1.15">${(cam.alt_view.detection_count || 0).toLocaleString()}</div>
+           </div>`
+        : `<div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
+             <span style="font-size:12px;font-weight:600;color:#475569">Low</span>
+             <div style="width:130px;height:12px;border-radius:6px;background:linear-gradient(to right,#14a040,#facc15,#f97316,#dc2626);box-shadow:0 1px 4px rgba(0,0,0,.1)"></div>
+             <span style="font-size:12px;font-weight:600;color:#475569">High</span>
+           </div>`;
+
       areaEl.innerHTML = tabsHtml + `
         <div class="chart-card full" style="margin-bottom:18px">
+          ${subTabsHtml}
           <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;margin-bottom:14px">
             <div>
-              <div style="font-size:17px;font-weight:800;color:#0f172a;margin-bottom:3px">Store Heatmap — Customer Movement Pattern</div>
-              <div style="font-size:12.5px;color:#64748b">${cam.label} &nbsp;·&nbsp; ${cam.docs} snapshots</div>
+              <div style="font-size:17px;font-weight:800;color:#0f172a;margin-bottom:3px">${title}</div>
+              <div style="font-size:12.5px;color:#64748b">${subtitle}</div>
             </div>
-            <div style="display:flex;align-items:center;gap:8px;flex-shrink:0">
-              <span style="font-size:12px;font-weight:600;color:#475569">Low</span>
-              <div style="width:130px;height:12px;border-radius:6px;background:linear-gradient(to right,#14a040,#facc15,#f97316,#dc2626);box-shadow:0 1px 4px rgba(0,0,0,.1)"></div>
-              <span style="font-size:12px;font-weight:600;color:#475569">High</span>
-            </div>
+            ${headerRight}
           </div>
           <div style="display:flex;justify-content:center">
             <div style="position:relative;display:inline-block;border-radius:10px;overflow:hidden;border:2px solid #e2e8f0;cursor:zoom-in;background:#0f172a;line-height:0"
@@ -882,7 +975,17 @@
           </div>
         </div>`;
 
-      setTimeout(() => renderCamHeatmap(cam), 0);
+      setTimeout(() => {
+        if (isAlt) {
+          renderCamHeatmap(cam, {
+            points: cam.alt_view.points,
+            roi:    cam.alt_view.roi,
+            ramp:   _HM_RAMP_BLUE,
+          });
+        } else {
+          renderCamHeatmap(cam);
+        }
+      }, 0);
     }
 
     async function loadHeatmap() {
