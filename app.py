@@ -1160,6 +1160,13 @@ def cf_staff_presence():
         grid = {}                 # (store, date) -> {hour_label: staff}
         hours_seen = set()
         for r in collection.aggregate(pipeline):
+            # Only surface business hours: 10 AM to 10 PM.
+            try:
+                hour_int = int(r['_id']['hour'])
+            except (TypeError, ValueError):
+                continue
+            if hour_int < 10 or hour_int > 22:
+                continue
             key = (r['_id']['store'], r['_id']['date'])
             hour_label = f"{r['_id']['hour']}:00"
             hours_seen.add(hour_label)
