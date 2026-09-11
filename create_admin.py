@@ -68,7 +68,7 @@ def main():
     col.create_index('username', unique=True, name='uq_username')
     col.create_index(
         'email', unique=True, name='uq_email_partial',
-        partialFilterExpression={'email': {'$exists': True, '$ne': None, '$ne': ''}},
+        partialFilterExpression={'email': {'$exists': True, '$gt': ''}},
     )
     print("[OK] Indexes created")
 
