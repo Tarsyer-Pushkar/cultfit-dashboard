@@ -44,13 +44,13 @@
     button { cursor: pointer; }
 
     /* ── Login ── */
-    #login-screen {
+    #login-screen, #change-password-screen {
       position: fixed; inset: 0;
       background: linear-gradient(135deg, #6b0f0f 0%, #b91c1c 55%, #dc2626 100%);
       display: flex; align-items: center; justify-content: center;
       z-index: 9999; font-family: 'Inter', sans-serif;
     }
-    #login-screen.hidden { display: none; }
+    #login-screen.hidden, #change-password-screen.hidden { display: none; }
 
     .login-card {
       display: flex; width: 1060px; max-width: 97vw; min-height: 540px;
@@ -285,6 +285,38 @@
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 3px; }
+
+    /* ── User Management ── */
+    .um-table { width:100%; border-collapse:collapse; background:#fff; font-size:13px; }
+    .um-table th { text-align:left; font-size:10.5px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:.6px; background:#f8fafc; padding:10px 14px; border-bottom:1px solid var(--border); white-space:nowrap; }
+    .um-table td { padding:10px 14px; border-bottom:1px solid #f1f5f9; vertical-align:middle; }
+    .um-table tr:last-child td { border-bottom:none; }
+    .um-table tr:hover td { background:#f8fafc; }
+    .um-badge { display:inline-block; padding:3px 10px; border-radius:20px; font-size:11px; font-weight:700; letter-spacing:.3px; }
+    .um-badge.admin { background:#ede9fe; color:#7c3aed; }
+    .um-badge.user { background:#e0f2fe; color:#0284c7; }
+    .um-badge.active { background:#dcfce7; color:#166534; }
+    .um-badge.disabled { background:#fee2e2; color:#991b1b; }
+    .um-badge.pending { background:#fef3c7; color:#92400e; }
+    .um-btn { padding:5px 12px; border:1.5px solid var(--border); border-radius:7px; font-size:11.5px; font-weight:600; background:#fff; cursor:pointer; transition:all .15s; font-family:inherit; white-space:nowrap; }
+    .um-btn:hover { border-color:var(--primary); color:var(--primary); background:#fef2f2; }
+    .um-btn.danger { color:#dc2626; border-color:#fecaca; }
+    .um-btn.danger:hover { background:#fef2f2; border-color:#dc2626; }
+    .um-btn.success { color:#16a34a; border-color:#bbf7d0; }
+    .um-btn.success:hover { background:#f0fdf4; border-color:#16a34a; }
+    .um-modal-overlay { display:none; position:fixed; inset:0; background:rgba(0,0,0,.5); z-index:10001; align-items:center; justify-content:center; }
+    .um-modal-overlay.open { display:flex; }
+    .um-modal { background:#fff; border-radius:16px; padding:28px 32px; max-width:460px; width:95vw; box-shadow:0 20px 60px rgba(0,0,0,.3); }
+    .um-modal h3 { font-size:18px; font-weight:700; margin-bottom:18px; color:var(--text); }
+    .um-modal label { font-size:11px; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:1.2px; display:block; margin-bottom:6px; margin-top:14px; }
+    .um-modal input, .um-modal select { width:100%; padding:10px 14px; border:1.5px solid #e5e3df; border-radius:10px; font-size:13px; outline:none; transition:border .2s; font-family:inherit; }
+    .um-modal input:focus, .um-modal select:focus { border-color:var(--primary); }
+    .um-modal-actions { display:flex; gap:10px; margin-top:22px; justify-content:flex-end; }
+    .um-checkbox-row { display:flex; align-items:center; gap:8px; margin-top:14px; font-size:13px; color:var(--text); }
+    .um-checkbox-row input[type=checkbox] { width:16px; height:16px; accent-color:var(--primary); }
+
+    /* ── Password expiry banner ── */
+    .pw-expiry-banner { position:fixed; top:56px; left:50%; transform:translateX(-50%); background:linear-gradient(135deg,#fbbf24,#f59e0b); color:#78350f; padding:10px 24px; border-radius:10px; font-size:13px; font-weight:600; z-index:9000; box-shadow:0 4px 16px rgba(0,0,0,.15); display:flex; align-items:center; gap:8px; }
   </style>
 </head>
 
@@ -337,6 +369,38 @@
     </div>
   </div>
 
+  <!-- ── Change Password Screen ── -->
+  <div id="change-password-screen" class="hidden">
+    <div class="login-card" style="max-width:480px;min-height:auto">
+      <div class="login-right" style="width:100%;padding:40px 36px">
+        <div class="lr-logo-wrap">
+          <img src="/cultfit_logo.png" alt="cult.fit" class="lr-client-logo" />
+        </div>
+        <div class="lr-welcome">Security Required</div>
+        <div class="lr-title">Change Your Password</div>
+        <div class="lr-subtitle">Your password has expired or a change is required. Please set a new password (min. 12 characters).</div>
+
+        <label class="login-field-label">Current Password</label>
+        <div class="login-input-wrap">
+          <input id="cp-current" type="password" placeholder="Enter current password" autocomplete="current-password" />
+        </div>
+
+        <label class="login-field-label">New Password</label>
+        <div class="login-input-wrap">
+          <input id="cp-new" type="password" placeholder="Min 12 characters" autocomplete="new-password" />
+        </div>
+
+        <label class="login-field-label">Confirm New Password</label>
+        <div class="login-input-wrap">
+          <input id="cp-confirm" type="password" placeholder="Re-enter new password" autocomplete="new-password" />
+        </div>
+
+        <button class="login-btn" id="cp-btn">Change Password →</button>
+        <div class="login-error" id="cp-error"></div>
+      </div>
+    </div>
+  </div>
+
   <!-- ── Lightbox modal ── -->
   <div id="lightbox" onclick="closeLightbox()">
     <div onclick="event.stopPropagation()" style="position:relative;display:flex;flex-direction:column;align-items:center;max-width:82vw">
@@ -383,6 +447,10 @@
         </button>
         <button class="nav-item" data-view="gate" data-label="Gate Activity">
           <span class="icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v16"/><circle cx="14" cy="12" r="1"/></svg></span><span class="nav-label">Gate Activity</span>
+        </button>
+        <div class="sidebar-section" id="admin-sidebar-section" style="display:none">Administration</div>
+        <button class="nav-item" data-view="users" data-label="User Management" id="nav-users" style="display:none">
+          <span class="icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="19" y1="8" x2="19" y2="14"/><line x1="22" y1="11" x2="16" y2="11"/></svg></span><span class="nav-label">User Management</span>
         </button>
       </nav>
 
@@ -511,6 +579,66 @@
             </div>
           </div>
         </div>
+
+        <!-- ── USER MANAGEMENT ── -->
+        <div id="view-users" style="display:none">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+            <div>
+              <h2 style="font-size:20px;font-weight:800;color:var(--text);margin-bottom:2px">User Management</h2>
+              <p style="font-size:13px;color:var(--text-muted)">Manage dashboard users, roles, and passwords</p>
+            </div>
+            <button class="apply-btn" id="um-create-btn" onclick="umOpenCreateModal()" style="padding:8px 20px">＋ Create User</button>
+          </div>
+          <div class="chart-card full" style="padding:0;overflow:hidden">
+            <div style="overflow-x:auto">
+              <table class="um-table" id="um-table">
+                <thead>
+                  <tr><th>Username</th><th>Email</th><th>Role</th><th>Status</th><th>Password</th><th>Actions</th></tr>
+                </thead>
+                <tbody id="um-tbody"><tr><td colspan="6"><div class="loading-overlay"><span class="spinner"></span> Loading…</div></td></tr></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Create User Modal -->
+        <div class="um-modal-overlay" id="um-create-modal">
+          <div class="um-modal">
+            <h3>Create New User</h3>
+            <label>Username</label>
+            <input id="um-new-username" type="text" placeholder="e.g. john@company.com" />
+            <label>Email (optional)</label>
+            <input id="um-new-email" type="email" placeholder="john@company.com" />
+            <label>Role</label>
+            <select id="um-new-role"><option value="user">User</option><option value="admin">Admin</option></select>
+            <label>Temporary Password</label>
+            <input id="um-new-password" type="password" placeholder="Min 12 characters" />
+            <div class="um-checkbox-row">
+              <input type="checkbox" id="um-new-force" checked />
+              <span>Require password change on first login</span>
+            </div>
+            <div class="login-error" id="um-create-error" style="text-align:left"></div>
+            <div class="um-modal-actions">
+              <button class="um-btn" onclick="umCloseCreateModal()">Cancel</button>
+              <button class="apply-btn" id="um-submit-btn" onclick="umSubmitCreate()">Create User</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Reset Password Modal -->
+        <div class="um-modal-overlay" id="um-reset-modal">
+          <div class="um-modal">
+            <h3>Reset Password</h3>
+            <p style="font-size:13px;color:var(--text-muted);margin-bottom:8px" id="um-reset-info"></p>
+            <label>New Temporary Password</label>
+            <input id="um-reset-password" type="password" placeholder="Min 12 characters" />
+            <div class="login-error" id="um-reset-error" style="text-align:left"></div>
+            <div class="um-modal-actions">
+              <button class="um-btn" onclick="umCloseResetModal()">Cancel</button>
+              <button class="apply-btn" id="um-reset-btn" onclick="umSubmitReset()">Reset Password</button>
+            </div>
+          </div>
+        </div>
       </main>
     </div>
   </div>
@@ -603,13 +731,36 @@
       const params = new URLSearchParams({ start: S.start, end: S.end, store: S.store, ...extra });
       try {
         const r = await fetchWithTimeout(`/api${path}?${params}`, { credentials: 'include' });
-        if (r.status === 401) { showLogin(); return null; }
+        if (r.status === 401) {
+          try {
+            const body = await r.json();
+            if (body.code === 'PASSWORD_CHANGE_REQUIRED') { openChangePassword(); return null; }
+          } catch {}
+          showLogin(); return null;
+        }
         if (r.status === 503) { showDbBanner('Database unreachable'); return null; }
         if (!r.ok) { showDbBanner(`Server error (${r.status})`); return null; }
         try { return await r.json(); } catch { showDbBanner('Invalid server response'); return null; }
       } catch (e) {
         showDbBanner(e.name === 'AbortError' ? 'Request timed out' : 'Network error');
         return null;
+      }
+    }
+
+    async function apiJson(method, path, body = null) {
+      const opts = {
+        method,
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+      };
+      if (body) opts.body = JSON.stringify(body);
+      try {
+        const r = await fetchWithTimeout(`/api${path}`, opts);
+        const d = await r.json();
+        d._status = r.status;
+        return d;
+      } catch (e) {
+        return { error: e.message, _status: 0 };
       }
     }
 
@@ -1302,14 +1453,54 @@
         </tr>`).join('');
     }
 
-    // ── Login ───────────────────────────────────────────────────────────────
+    // ── Login / Change Password screens ───────────────────────────────────────────
+    let _currentRole = null;
+
     function showLogin() {
       document.getElementById('login-screen').classList.remove('hidden');
+      document.getElementById('change-password-screen').classList.add('hidden');
       document.getElementById('app').classList.remove('visible');
     }
     function hideLogin() {
       document.getElementById('login-screen').classList.add('hidden');
+      document.getElementById('change-password-screen').classList.add('hidden');
       document.getElementById('app').classList.add('visible');
+    }
+    function openChangePassword() {
+      document.getElementById('login-screen').classList.add('hidden');
+      document.getElementById('change-password-screen').classList.remove('hidden');
+      document.getElementById('app').classList.remove('visible');
+      document.getElementById('cp-error').textContent = '';
+      document.getElementById('cp-current').value = '';
+      document.getElementById('cp-new').value = '';
+      document.getElementById('cp-confirm').value = '';
+    }
+    function hideChangePassword() {
+      document.getElementById('change-password-screen').classList.add('hidden');
+    }
+
+    function setAdminNav(role) {
+      _currentRole = role;
+      const show = role === 'admin';
+      const sect = document.getElementById('admin-sidebar-section');
+      const nav = document.getElementById('nav-users');
+      if (sect) sect.style.display = show ? '' : 'none';
+      if (nav) nav.style.display = show ? '' : 'none';
+    }
+
+    function showExpiryWarning(days) {
+      if (typeof days !== 'number' || days > 7) return;
+      let banner = document.getElementById('pw-expiry-banner');
+      if (!banner) {
+        banner = document.createElement('div');
+        banner.id = 'pw-expiry-banner';
+        banner.className = 'pw-expiry-banner';
+        document.body.appendChild(banner);
+      }
+      banner.innerHTML = `⚠️ Your password expires in ${days} day${days !== 1 ? 's' : ''}. Please change it soon.`;
+      banner.style.display = 'flex';
+      clearTimeout(banner._t);
+      banner._t = setTimeout(() => { banner.style.display = 'none'; }, 10000);
     }
 
     let _allStores = [];
@@ -1363,17 +1554,32 @@
     }
 
     async function checkAuth() {
-      const r = await fetch('/api/me', { credentials: 'include' });
-      if (r.ok) {
+      try {
+        const r = await fetch('/api/me', { credentials: 'include' });
+        if (!r.ok) { showLogin(); return; }
         const d = await r.json();
-        if (d.logged_in) {
-          document.getElementById('topbar-user').textContent = d.username + (d.region ? ' · ' + d.region : '');
-          document.getElementById('topbar-avatar').textContent = d.username.charAt(0).toUpperCase();
-          hideLogin(); await loadStores(); initDates(); updateFilterDisplay(); loadView();
+        if (!d.logged_in) { showLogin(); return; }
+
+        // Password change required?
+        if (d.password_change_required) {
+          openChangePassword();
           return;
         }
+
+        // Normal dashboard entry
+        document.getElementById('topbar-user').textContent = d.username;
+        document.getElementById('topbar-avatar').textContent = d.username.charAt(0).toUpperCase();
+        setAdminNav(d.role);
+        hideLogin();
+        await loadStores(); initDates(); updateFilterDisplay(); loadView();
+
+        // Expiry warning
+        if (typeof d.days_until_expiry === 'number' && d.days_until_expiry <= 7) {
+          showExpiryWarning(d.days_until_expiry);
+        }
+      } catch {
+        showLogin();
       }
-      showLogin();
     }
 
     document.getElementById('login-btn').addEventListener('click', async () => {
@@ -1391,9 +1597,12 @@
         });
         const d = await r.json();
         if (d.success) {
-          document.getElementById('topbar-user').textContent = d.username + (d.region ? ' · ' + d.region : '');
+          document.getElementById('topbar-user').textContent = d.username;
           document.getElementById('topbar-avatar').textContent = d.username.charAt(0).toUpperCase();
+          setAdminNav(d.role);
           hideLogin(); await loadStores(); initDates(); updateFilterDisplay(); loadView();
+        } else if (d.code === 'PASSWORD_CHANGE_REQUIRED') {
+          openChangePassword();
         } else {
           err.textContent = d.message || 'Login failed';
         }
@@ -1406,8 +1615,156 @@
     });
     document.getElementById('logout-btn').addEventListener('click', async () => {
       await fetch('/api/logout', { method: 'POST', credentials: 'include' });
+      _currentRole = null;
+      setAdminNav(null);
       showLogin();
     });
+
+    // ── Change password handler ─────────────────────────────────────────────────
+    document.getElementById('cp-btn').addEventListener('click', async () => {
+      const cur = document.getElementById('cp-current').value;
+      const np = document.getElementById('cp-new').value;
+      const conf = document.getElementById('cp-confirm').value;
+      const err = document.getElementById('cp-error');
+      err.textContent = '';
+
+      if (!cur || !np || !conf) { err.textContent = 'All fields are required.'; return; }
+      if (np !== conf) { err.textContent = 'New passwords do not match.'; return; }
+
+      const btn = document.getElementById('cp-btn');
+      btn.textContent = 'Changing…'; btn.disabled = true;
+      try {
+        const d = await apiJson('POST', '/auth/change-password', {
+          current_password: cur,
+          new_password: np,
+          confirm_password: conf,
+        });
+        if (d.success) {
+          hideChangePassword();
+          await checkAuth();
+        } else {
+          err.textContent = d.error || 'Password change failed.';
+        }
+      } finally {
+        btn.textContent = 'Change Password →'; btn.disabled = false;
+      }
+    });
+    document.getElementById('cp-confirm').addEventListener('keydown', e => {
+      if (e.key === 'Enter') document.getElementById('cp-btn').click();
+    });
+
+    // ── User Management ─────────────────────────────────────────────────────
+    let _umResetUserId = null;
+
+    async function loadUserManagement() {
+      const tbody = document.getElementById('um-tbody');
+      tbody.innerHTML = '<tr><td colspan="6"><div class="loading-overlay"><span class="spinner"></span> Loading…</div></td></tr>';
+
+      const d = await apiJson('GET', '/admin/users');
+      if (!d || d.error || !d.users) {
+        tbody.innerHTML = '<tr><td colspan="6"><div class="empty-state"><p>Failed to load users</p></div></td></tr>';
+        return;
+      }
+
+      tbody.innerHTML = d.users.map(u => {
+        const roleBadge = `<span class="um-badge ${u.role}">${u.role}</span>`;
+        const statusBadge = u.is_active
+          ? '<span class="um-badge active">Active</span>'
+          : '<span class="um-badge disabled">Disabled</span>';
+        const pwStatus = u.password_expired
+          ? '<span class="um-badge disabled">Expired</span>'
+          : u.force_password_change
+            ? '<span class="um-badge pending">Change Required</span>'
+            : `<span style="font-size:12px;color:var(--text-muted)">${u.days_until_expiry !== null ? u.days_until_expiry + 'd left' : '—'}</span>`;
+
+        const toggleBtn = u.is_active
+          ? `<button class="um-btn danger" onclick="umToggleActive('${u.id}', false)">Disable</button>`
+          : `<button class="um-btn success" onclick="umToggleActive('${u.id}', true)">Enable</button>`;
+
+        return `<tr>
+          <td style="font-weight:600">${u.username}</td>
+          <td style="color:var(--text-muted)">${u.email || '—'}</td>
+          <td>${roleBadge}</td>
+          <td>${statusBadge}</td>
+          <td>${pwStatus}</td>
+          <td style="white-space:nowrap">
+            ${toggleBtn}
+            <button class="um-btn" onclick="umForceChange('${u.id}')">Force Change</button>
+            <button class="um-btn" onclick="umOpenResetModal('${u.id}','${u.username}')">Reset PW</button>
+          </td>
+        </tr>`;
+      }).join('');
+    }
+
+    async function umToggleActive(userId, active) {
+      const d = await apiJson('PATCH', `/admin/users/${userId}`, { is_active: active });
+      if (d && d.success) loadUserManagement();
+      else showDbBanner(d?.error || 'Failed to update user');
+    }
+
+    async function umForceChange(userId) {
+      const d = await apiJson('POST', `/admin/users/${userId}/force-password-change`);
+      if (d && d.success) { showDbBanner('Password change forced'); loadUserManagement(); }
+      else showDbBanner(d?.error || 'Failed');
+    }
+
+    function umOpenCreateModal() {
+      document.getElementById('um-create-modal').classList.add('open');
+      document.getElementById('um-create-error').textContent = '';
+      document.getElementById('um-new-username').value = '';
+      document.getElementById('um-new-email').value = '';
+      document.getElementById('um-new-role').value = 'user';
+      document.getElementById('um-new-password').value = '';
+      document.getElementById('um-new-force').checked = true;
+    }
+    function umCloseCreateModal() {
+      document.getElementById('um-create-modal').classList.remove('open');
+    }
+
+    async function umSubmitCreate() {
+      const err = document.getElementById('um-create-error');
+      err.textContent = '';
+      const d = await apiJson('POST', '/admin/users', {
+        username: document.getElementById('um-new-username').value.trim(),
+        email: document.getElementById('um-new-email').value.trim(),
+        role: document.getElementById('um-new-role').value,
+        password: document.getElementById('um-new-password').value,
+        force_password_change: document.getElementById('um-new-force').checked,
+      });
+      if (d && d.success) {
+        umCloseCreateModal();
+        loadUserManagement();
+      } else {
+        err.textContent = d?.error || 'Failed to create user';
+      }
+    }
+
+    function umOpenResetModal(userId, username) {
+      _umResetUserId = userId;
+      document.getElementById('um-reset-info').textContent = `Set a new temporary password for ${username}. They will be required to change it on next login.`;
+      document.getElementById('um-reset-password').value = '';
+      document.getElementById('um-reset-error').textContent = '';
+      document.getElementById('um-reset-modal').classList.add('open');
+    }
+    function umCloseResetModal() {
+      document.getElementById('um-reset-modal').classList.remove('open');
+      _umResetUserId = null;
+    }
+
+    async function umSubmitReset() {
+      const err = document.getElementById('um-reset-error');
+      err.textContent = '';
+      const pw = document.getElementById('um-reset-password').value;
+      if (!pw) { err.textContent = 'Password is required'; return; }
+      const d = await apiJson('POST', `/admin/users/${_umResetUserId}/reset-password`, { password: pw });
+      if (d && d.success) {
+        umCloseResetModal();
+        showDbBanner('Password reset successfully');
+        loadUserManagement();
+      } else {
+        err.textContent = d?.error || 'Failed to reset password';
+      }
+    }
 
     // ── Date helpers ──────────────────────────────────────────────────────────
     function initDates() {
@@ -1496,6 +1853,8 @@
         if (storeSelected) { await loadShopperFlow(); }
       } else if (S.view === 'gate') {
         await loadGateActivity();
+      } else if (S.view === 'users') {
+        await loadUserManagement();
       }
     }
 

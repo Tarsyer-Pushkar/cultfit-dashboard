@@ -2,8 +2,9 @@ from flask import Flask, jsonify, request, session, send_from_directory, Respons
 from flask_cors import CORS
 from datetime import datetime, timedelta
 from functools import wraps
-import os, csv, io, time, json, collections
+import os, csv, io, time, json, collections, re
 import bcrypt
+from bson import ObjectId
 from dotenv import load_dotenv
 import pymongo
 
@@ -53,6 +54,88 @@ def _get_db():
         _mongo_db = None
     return _mongo_db
 
+# ─── Users (MongoDB-backed auth) ──────────────────────────────────────────────
+PASSWORD_EXPIRY_DAYS = 30
+
+def _users_col():
+    db = _get_db()
+    return db['users'] if db is not None else None
+
+def _ensure_user_indexes():
+    col = _users_col()
+    if col is None:
+        return
+    try:
+        col.create_index('username', unique=True, name='uq_username')
+        col.create_index(
+            'email', unique=True, name='uq_email_partial',
+            partialFilterExpression={'email': {'$exists': True, '$ne': None, '$ne': ''}},
+        )
+        print("[DB] User indexes ensured")
+    except Exception as exc:
+        print(f"[DB] Failed to create user indexes: {exc}")
+
+def _serialize_user(doc):
+    """Strict allowlist serializer — NEVER includes password_hash."""
+    if not doc:
+        return None
+    now = datetime.utcnow()
+    expires_at = doc.get('password_expires_at')
+    password_expired = isinstance(expires_at, datetime) and expires_at <= now
+    days_until = None
+    if isinstance(expires_at, datetime) and not password_expired:
+        days_until = max(0, (expires_at - now).days)
+    return {
+        'id':                    str(doc['_id']),
+        'username':              doc.get('username', ''),
+        'email':                 doc.get('email', ''),
+        'role':                  doc.get('role', 'user'),
+        'is_active':             doc.get('is_active', True),
+        'force_password_change': doc.get('force_password_change', False),
+        'password_changed_at':   doc.get('password_changed_at', '').isoformat() if isinstance(doc.get('password_changed_at'), datetime) else '',
+        'password_expires_at':   expires_at.isoformat() if isinstance(expires_at, datetime) else '',
+        'password_expired':      password_expired,
+        'days_until_expiry':     days_until,
+        'created_at':            doc.get('created_at', '').isoformat() if isinstance(doc.get('created_at'), datetime) else '',
+    }
+
+# ─── Password policy ─────────────────────────────────────────────────────────
+_COMMON_PASSWORDS = {
+    'password1234', 'password123!', 'changeme1234', 'admin1234567',
+    'letmein12345', 'welcome12345', '123456789012', 'qwerty123456',
+    'iloveyou1234', 'password!234',
+}
+
+def validate_password_policy(new_password, current_password_plain=None):
+    """Returns an error string or None if the password is acceptable."""
+    if not new_password or len(new_password) < 12:
+        return 'Password must be at least 12 characters.'
+    if len(new_password) > 256:
+        return 'Password must be at most 256 characters.'
+    if new_password.lower() in _COMMON_PASSWORDS:
+        return 'That password is too common. Choose something more unique.'
+    if current_password_plain and new_password == current_password_plain:
+        return 'New password must be different from the current password.'
+    return None
+
+# ─── Audit logging ────────────────────────────────────────────────────────────
+def _audit_log(action, user_id=None, performed_by=None, meta=None):
+    """Insert an audit event. Never put passwords or hashes in meta."""
+    db = _get_db()
+    if db is None:
+        return
+    try:
+        doc = {
+            'action':       action,
+            'user_id':      str(user_id) if user_id else None,
+            'performed_by': str(performed_by) if performed_by else None,
+            'meta':         meta or {},
+            'timestamp':    datetime.utcnow(),
+        }
+        db['audit_logs'].insert_one(doc)
+    except Exception as exc:
+        print(f"[Audit] Failed to log {action}: {exc}")
+
 # ─── GCS signed URLs ───────────────────────────────────────────────────────────
 _gcs_client = None
 _GCS_PREFIX = "https://storage.googleapis.com/"
@@ -93,17 +176,6 @@ def signed_url(raw_url: str, expires_minutes: int = 15) -> str:
 PROJECT_NAME = 'Cultfit'
 
 # ─── Auth ─────────────────────────────────────────────────────────────────────
-# Password hash is for: TarsyerxCult.fit
-_TARSYER_PASSWORD_HASH = '$2b$12$05O2Is25xTkix2429U8s/OklA/is/xfqEBjuffFx5UjPqrgbcmr8q'
-
-_STATIC_USERS = {
-    'cultfit@tarsyer.com': {
-        'password_hash': _TARSYER_PASSWORD_HASH,
-        'region': 'Cultfit',
-        'role': 'analytics',
-    },
-}
-
 _login_attempts: dict = {}
 LOGIN_MAX_ATTEMPTS = 10
 LOGIN_WINDOW_SECS  = 300
@@ -117,11 +189,44 @@ def _check_rate_limit(ip: str) -> bool:
     _login_attempts[ip].append(now)
     return True
 
+def _load_current_user():
+    """Load the current user's Mongo doc from session['user_id']. Returns None if no valid session."""
+    uid = session.get('user_id')
+    if not uid:
+        return None
+    col = _users_col()
+    if col is None:
+        return None
+    try:
+        return col.find_one({'_id': ObjectId(uid)})
+    except Exception:
+        return None
+
 def require_login(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
-        if 'user' not in session:
-            return jsonify({'error': 'Unauthorized'}), 401
+        user = _load_current_user()
+        if not user:
+            return jsonify({'error': 'Unauthorized', 'code': 'NOT_AUTHENTICATED'}), 401
+        if not user.get('is_active', True):
+            session.clear()
+            return jsonify({'error': 'Account disabled', 'code': 'ACCOUNT_DISABLED'}), 401
+        # Check password expiry / force-change on every request
+        now = datetime.utcnow()
+        expires_at = user.get('password_expires_at')
+        expired = isinstance(expires_at, datetime) and expires_at <= now
+        if user.get('force_password_change') or expired:
+            return jsonify({'error': 'Password change required', 'code': 'PASSWORD_CHANGE_REQUIRED'}), 401
+        request.current_user = user
+        return f(*args, **kwargs)
+    return wrapper
+
+def require_admin(f):
+    @wraps(f)
+    @require_login
+    def wrapper(*args, **kwargs):
+        if request.current_user.get('role') != 'admin':
+            return jsonify({'error': 'Forbidden', 'code': 'FORBIDDEN'}), 403
         return f(*args, **kwargs)
     return wrapper
 
@@ -135,15 +240,42 @@ def login():
     username = str(data.get('username', ''))[:64]
     password = str(data.get('password', ''))[:256]
 
-    user = _STATIC_USERS.get(username)
-    if user and bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')):
-        session.permanent = True
-        session['user'] = username
-        session['region'] = user['region']
-        session['role'] = user['role']
-        return jsonify({'success': True, 'username': username, 'region': user['region'], 'role': user['role']})
+    col = _users_col()
+    if col is None:
+        return jsonify({'success': False, 'message': 'Database unavailable'}), 503
 
-    return jsonify({'success': False, 'message': 'Invalid credentials'}), 401
+    user = col.find_one({'username': username})
+    if not user or not bcrypt.checkpw(password.encode('utf-8'), user['password_hash'].encode('utf-8')):
+        _audit_log('LOGIN_FAILED', meta={'username': username, 'ip': ip})
+        return jsonify({'success': False, 'message': 'Invalid credentials'}), 401
+
+    if not user.get('is_active', True):
+        _audit_log('LOGIN_FAILED', user_id=user['_id'], meta={'reason': 'disabled', 'ip': ip})
+        return jsonify({'success': False, 'message': 'Account disabled', 'code': 'ACCOUNT_DISABLED'}), 401
+
+    session.permanent = True
+    session['user_id'] = str(user['_id'])
+
+    _audit_log('LOGIN_SUCCESS', user_id=user['_id'], meta={'ip': ip})
+
+    # Check if password change is required
+    now = datetime.utcnow()
+    expires_at = user.get('password_expires_at')
+    expired = isinstance(expires_at, datetime) and expires_at <= now
+    if user.get('force_password_change') or expired:
+        return jsonify({
+            'success': False,
+            'message': 'Password change required',
+            'code': 'PASSWORD_CHANGE_REQUIRED',
+            'username': user['username'],
+            'role': user.get('role', 'user'),
+        }), 401
+
+    return jsonify({
+        'success': True,
+        'username': user['username'],
+        'role': user.get('role', 'user'),
+    })
 
 @app.route('/api/logout', methods=['POST'])
 def logout():
@@ -152,14 +284,259 @@ def logout():
 
 @app.route('/api/me')
 def me():
-    if 'user' in session:
-        return jsonify({
-            'logged_in': True,
-            'username': session['user'],
-            'region': session.get('region', ''),
-            'role': session.get('role', 'analytics'),
-        })
-    return jsonify({'logged_in': False})
+    user = _load_current_user()
+    if not user:
+        return jsonify({'logged_in': False})
+
+    if not user.get('is_active', True):
+        session.clear()
+        return jsonify({'logged_in': False})
+
+    now = datetime.utcnow()
+    expires_at = user.get('password_expires_at')
+    expired = isinstance(expires_at, datetime) and expires_at <= now
+    password_change_required = bool(user.get('force_password_change') or expired)
+    days_until = None
+    if isinstance(expires_at, datetime) and not expired:
+        days_until = max(0, (expires_at - now).days)
+
+    return jsonify({
+        'logged_in': True,
+        'username': user['username'],
+        'role': user.get('role', 'user'),
+        'email': user.get('email', ''),
+        'password_change_required': password_change_required,
+        'days_until_expiry': days_until,
+        'password_expires_at': expires_at.isoformat() if isinstance(expires_at, datetime) else None,
+    })
+
+# ─── Change password ─────────────────────────────────────────────────────────
+@app.route('/api/auth/change-password', methods=['POST'])
+def change_password():
+    """Own lightweight auth check — works even in the force-change state."""
+    uid = session.get('user_id')
+    if not uid:
+        return jsonify({'error': 'Unauthorized', 'code': 'NOT_AUTHENTICATED'}), 401
+
+    col = _users_col()
+    if col is None:
+        return jsonify({'error': 'Database unavailable'}), 503
+
+    user = col.find_one({'_id': ObjectId(uid)})
+    if not user:
+        session.clear()
+        return jsonify({'error': 'Unauthorized', 'code': 'NOT_AUTHENTICATED'}), 401
+    if not user.get('is_active', True):
+        session.clear()
+        return jsonify({'error': 'Account disabled', 'code': 'ACCOUNT_DISABLED'}), 401
+
+    data = request.get_json(silent=True) or {}
+    current_password = str(data.get('current_password', ''))[:256]
+    new_password = str(data.get('new_password', ''))[:256]
+    confirm_password = str(data.get('confirm_password', ''))[:256]
+
+    # Verify current password
+    if not bcrypt.checkpw(current_password.encode('utf-8'), user['password_hash'].encode('utf-8')):
+        return jsonify({'error': 'Current password is incorrect'}), 400
+
+    # Confirm match
+    if new_password != confirm_password:
+        return jsonify({'error': 'New passwords do not match'}), 400
+
+    # Policy check
+    policy_err = validate_password_policy(new_password, current_password_plain=current_password)
+    if policy_err:
+        return jsonify({'error': policy_err}), 400
+
+    # Hash and update
+    now = datetime.utcnow()
+    new_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    col.update_one({'_id': user['_id']}, {'$set': {
+        'password_hash':         new_hash,
+        'password_changed_at':   now,
+        'password_expires_at':   now + timedelta(days=PASSWORD_EXPIRY_DAYS),
+        'force_password_change': False,
+        'updated_at':            now,
+    }})
+
+    _audit_log('PASSWORD_CHANGED', user_id=user['_id'], performed_by=user['_id'])
+    return jsonify({'success': True, 'message': 'Password changed successfully'})
+
+# ─── Admin routes ─────────────────────────────────────────────────────────────
+@app.route('/api/admin/users')
+@require_admin
+def admin_list_users():
+    col = _users_col()
+    if col is None:
+        return jsonify({'error': 'Database unavailable'}), 503
+    users = [_serialize_user(u) for u in col.find().sort('created_at', 1)]
+    return jsonify({'users': users})
+
+@app.route('/api/admin/users', methods=['POST'])
+@require_admin
+def admin_create_user():
+    col = _users_col()
+    if col is None:
+        return jsonify({'error': 'Database unavailable'}), 503
+
+    data = request.get_json(silent=True) or {}
+    username = str(data.get('username', '')).strip()[:64]
+    email = str(data.get('email', '')).strip()[:128]
+    role = str(data.get('role', 'user'))[:10]
+    password = str(data.get('password', ''))[:256]
+    force_change = bool(data.get('force_password_change', True))
+
+    if not username:
+        return jsonify({'error': 'Username is required'}), 400
+    if role not in ('admin', 'user'):
+        return jsonify({'error': 'Role must be admin or user'}), 400
+
+    policy_err = validate_password_policy(password)
+    if policy_err:
+        return jsonify({'error': policy_err}), 400
+
+    # Check uniqueness
+    if col.find_one({'username': username}):
+        return jsonify({'error': 'Username already exists'}), 409
+    if email and col.find_one({'email': email}):
+        return jsonify({'error': 'Email already exists'}), 409
+
+    now = datetime.utcnow()
+    pw_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    new_user = {
+        'username':              username,
+        'email':                 email or None,
+        'password_hash':         pw_hash,
+        'role':                  role,
+        'is_active':             True,
+        'force_password_change': force_change,
+        'password_changed_at':   now,
+        'password_expires_at':   now + timedelta(days=PASSWORD_EXPIRY_DAYS),
+        'created_at':            now,
+        'updated_at':            now,
+    }
+    result = col.insert_one(new_user)
+    new_user['_id'] = result.inserted_id
+
+    _audit_log('USER_CREATED', user_id=result.inserted_id,
+               performed_by=request.current_user['_id'],
+               meta={'username': username, 'role': role})
+
+    return jsonify({'success': True, 'user': _serialize_user(new_user)}), 201
+
+@app.route('/api/admin/users/<user_id>', methods=['PATCH'])
+@require_admin
+def admin_update_user(user_id):
+    col = _users_col()
+    if col is None:
+        return jsonify({'error': 'Database unavailable'}), 503
+
+    try:
+        oid = ObjectId(user_id)
+    except Exception:
+        return jsonify({'error': 'Invalid user ID'}), 400
+
+    user = col.find_one({'_id': oid})
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    data = request.get_json(silent=True) or {}
+    updates = {'updated_at': datetime.utcnow()}
+
+    if 'role' in data:
+        role = str(data['role'])[:10]
+        if role not in ('admin', 'user'):
+            return jsonify({'error': 'Role must be admin or user'}), 400
+        updates['role'] = role
+
+    if 'email' in data:
+        email = str(data['email']).strip()[:128]
+        if email and col.find_one({'email': email, '_id': {'$ne': oid}}):
+            return jsonify({'error': 'Email already exists'}), 409
+        updates['email'] = email or None
+
+    if 'is_active' in data:
+        was_active = user.get('is_active', True)
+        is_active = bool(data['is_active'])
+        updates['is_active'] = is_active
+        if was_active and not is_active:
+            _audit_log('USER_DISABLED', user_id=oid,
+                       performed_by=request.current_user['_id'],
+                       meta={'username': user['username']})
+        elif not was_active and is_active:
+            _audit_log('USER_ENABLED', user_id=oid,
+                       performed_by=request.current_user['_id'],
+                       meta={'username': user['username']})
+
+    col.update_one({'_id': oid}, {'$set': updates})
+    updated_user = col.find_one({'_id': oid})
+    return jsonify({'success': True, 'user': _serialize_user(updated_user)})
+
+@app.route('/api/admin/users/<user_id>/reset-password', methods=['POST'])
+@require_admin
+def admin_reset_password(user_id):
+    col = _users_col()
+    if col is None:
+        return jsonify({'error': 'Database unavailable'}), 503
+
+    try:
+        oid = ObjectId(user_id)
+    except Exception:
+        return jsonify({'error': 'Invalid user ID'}), 400
+
+    user = col.find_one({'_id': oid})
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    data = request.get_json(silent=True) or {}
+    new_password = str(data.get('password', ''))[:256]
+
+    policy_err = validate_password_policy(new_password)
+    if policy_err:
+        return jsonify({'error': policy_err}), 400
+
+    now = datetime.utcnow()
+    pw_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+    col.update_one({'_id': oid}, {'$set': {
+        'password_hash':         pw_hash,
+        'password_changed_at':   now,
+        'password_expires_at':   now + timedelta(days=PASSWORD_EXPIRY_DAYS),
+        'force_password_change': True,
+        'updated_at':            now,
+    }})
+
+    _audit_log('PASSWORD_RESET', user_id=oid,
+               performed_by=request.current_user['_id'],
+               meta={'username': user['username']})
+
+    return jsonify({'success': True, 'message': 'Password reset successfully'})
+
+@app.route('/api/admin/users/<user_id>/force-password-change', methods=['POST'])
+@require_admin
+def admin_force_password_change(user_id):
+    col = _users_col()
+    if col is None:
+        return jsonify({'error': 'Database unavailable'}), 503
+
+    try:
+        oid = ObjectId(user_id)
+    except Exception:
+        return jsonify({'error': 'Invalid user ID'}), 400
+
+    user = col.find_one({'_id': oid})
+    if not user:
+        return jsonify({'error': 'User not found'}), 404
+
+    col.update_one({'_id': oid}, {'$set': {
+        'force_password_change': True,
+        'updated_at':            datetime.utcnow(),
+    }})
+
+    _audit_log('PASSWORD_CHANGE_FORCED', user_id=oid,
+               performed_by=request.current_user['_id'],
+               meta={'username': user['username']})
+
+    return jsonify({'success': True, 'message': 'Password change forced'})
 
 # ─── Stores ──────────────────────────────────────────────────────────────────
 _CF_STORES_FALLBACK = ['Cultfit-Mantri-Mall', 'Cultfit-HSR']
@@ -1199,5 +1576,6 @@ def serve(path):
 
 if __name__ == '__main__':
     _get_db()  # Test connection at startup
+    _ensure_user_indexes()
     port = int(os.environ.get('PORT', 21699))
     app.run(host='0.0.0.0', port=port, debug=(os.environ.get('FLASK_ENV') == 'development'))
