@@ -942,85 +942,12 @@
     }
     const _HM_RAMP_BLUE = _hmRampBlue();
 
-    // Rotating-vector-field overlay: sparse arrows sampled from the same
-    // density grid as the color heatmap, each spinning at a rate/length
-    // scaled by local density. One loop runs at a time (module-level RAF id).
-    let _hmVecRAF = null;
-    function stopVectorField() {
-      if (_hmVecRAF !== null) { cancelAnimationFrame(_hmVecRAF); _hmVecRAF = null; }
-    }
-    function startVectorField(vecCanvas, density, lW, lH, F, maxD, srcW, srcH, roi) {
-      vecCanvas.width  = srcW;
-      vecCanvas.height = srcH;
-      const ctx  = vecCanvas.getContext('2d');
-      const step = Math.max(16, Math.round(srcW / 42));
-
-      const field = [];
-      for (let py = step / 2; py < srcH; py += step) {
-        for (let px = step / 2; px < srcW; px += step) {
-          const lx = Math.min(lW - 1, Math.max(0, Math.floor(px / F)));
-          const ly = Math.min(lH - 1, Math.max(0, Math.floor(py / F)));
-          const val = density[ly * lW + lx];
-          if (!val) continue;
-          const norm = Math.min(1, val / maxD);
-          if (norm < 0.05) continue;
-          const seed = Math.sin(px * 12.9898 + py * 78.233) * 43758.5453;
-          field.push({ px, py, norm, base: (seed - Math.floor(seed)) * Math.PI * 2 });
-        }
-      }
-      if (!field.length) return;
-
-      if (roi && roi.length > 2) {
-        ctx.beginPath();
-        ctx.moveTo(roi[0].x, roi[0].y);
-        for (let k = 1; k < roi.length; k++) ctx.lineTo(roi[k].x, roi[k].y);
-        ctx.closePath();
-        ctx.clip();
-      }
-
-      let t0 = null;
-      const drawFrame = (ts) => {
-        if (t0 === null) t0 = ts;
-        const t = (ts - t0) / 1000;
-        ctx.clearRect(0, 0, srcW, srcH);
-        for (const p of field) {
-          const angle = p.base + t * (0.5 + p.norm * 1.1);
-          const len   = 5 + p.norm * 16;
-          const dx = Math.cos(angle) * len, dy = Math.sin(angle) * len;
-          const alpha = 0.3 + p.norm * 0.55;
-
-          ctx.strokeStyle = `rgba(56,189,248,${alpha})`;
-          ctx.lineWidth = 1.4 + p.norm * 1.4;
-          ctx.beginPath();
-          ctx.moveTo(p.px - dx / 2, p.py - dy / 2);
-          ctx.lineTo(p.px + dx / 2, p.py + dy / 2);
-          ctx.stroke();
-
-          const hx = p.px + dx / 2, hy = p.py + dy / 2;
-          const ah = 3.5 + p.norm * 3;
-          ctx.beginPath();
-          ctx.moveTo(hx, hy);
-          ctx.lineTo(hx - ah * Math.cos(angle - 0.4), hy - ah * Math.sin(angle - 0.4));
-          ctx.lineTo(hx - ah * Math.cos(angle + 0.4), hy - ah * Math.sin(angle + 0.4));
-          ctx.closePath();
-          ctx.fillStyle = `rgba(56,189,248,${alpha})`;
-          ctx.fill();
-        }
-        _hmVecRAF = requestAnimationFrame(drawFrame);
-      };
-      _hmVecRAF = requestAnimationFrame(drawFrame);
-    }
-
-    // opts (optional): { points, roi, ramp, vectorField } — when given, the
-    // density is built from opts.points, painted clipped to the opts.roi
-    // polygon (with its outline stroked on top), using opts.ramp. When
-    // opts.vectorField is true, a rotating-vector overlay is also animated
-    // on the sibling `hm-vec-<camera_no>` canvas. Omitted → original behaviour.
+    // opts (optional): { points, roi, ramp } — when given, the density is built
+    // from opts.points, painted clipped to the opts.roi polygon (with its
+    // outline stroked on top), using opts.ramp. Omitted → original behaviour.
     function renderCamHeatmap(cam, opts) {
-      stopVectorField();
       const imgEl    = document.getElementById(`hm-bg-${cam.camera_no}`);
       const canvasEl = document.getElementById(`hm-canvas-${cam.camera_no}`);
-      const vecEl    = opts && opts.vectorField ? document.getElementById(`hm-vec-${cam.camera_no}`) : null;
       const pts  = (opts && opts.points) || cam.points;
       const roi  = opts && opts.roi;
       const RAMP = (opts && opts.ramp) || _HM_RAMP;
@@ -1099,8 +1026,6 @@
         } else {
           ctx.drawImage(lowC, 0, 0, srcW, srcH);
         }
-
-        if (vecEl) startVectorField(vecEl, density, lW, lH, F, maxD, srcW, srcH, roi);
       };
 
       if (imgEl.complete && imgEl.naturalWidth > 0) doRender();
@@ -1186,7 +1111,6 @@
               <img id="hm-bg-${cam.camera_no}" src="${cam.image}" alt="${cam.label}"
                    style="display:block;max-width:100%;max-height:70vh;width:auto;height:auto;background:#0f172a;pointer-events:none"/>
               <canvas id="hm-canvas-${cam.camera_no}" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none"></canvas>
-              ${isAlt ? `<canvas id="hm-vec-${cam.camera_no}" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none"></canvas>` : ''}
             </div>
           </div>
         </div>`;
@@ -1194,10 +1118,9 @@
       setTimeout(() => {
         if (isAlt) {
           renderCamHeatmap(cam, {
-            points:      cam.alt_view.points,
-            roi:         cam.alt_view.roi,
-            ramp:        _HM_RAMP_BLUE,
-            vectorField: true,
+            points: cam.alt_view.points,
+            roi:    cam.alt_view.roi,
+            ramp:   _HM_RAMP_BLUE,
           });
         } else {
           renderCamHeatmap(cam);
