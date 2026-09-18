@@ -1113,7 +1113,17 @@
               <canvas id="hm-canvas-${cam.camera_no}" style="position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none"></canvas>
             </div>
           </div>
-        </div>`;
+        </div>` + (isAlt ? `
+        <div class="chart-card full" style="margin-bottom:18px">
+          <div class="chart-title">Aisle ROI — Hourly Detections</div>
+          <div class="chart-subtitle">${cam.label} &nbsp;·&nbsp; 10:00 – 21:00</div>
+          <div style="overflow-x:auto;margin-top:14px">
+            <table class="gate-table" id="hm-aisle-hourly-table">
+              <thead id="hm-aisle-hourly-head"></thead>
+              <tbody id="hm-aisle-hourly-tbody"></tbody>
+            </table>
+          </div>
+        </div>` : '');
 
       setTimeout(() => {
         if (isAlt) {
@@ -1122,10 +1132,71 @@
             roi:    cam.alt_view.roi,
             ramp:   _HM_RAMP_BLUE,
           });
+          loadAisleHourly(cam.camera_no);
         } else {
           renderCamHeatmap(cam);
         }
       }, 0);
+    }
+
+    async function loadAisleHourly(camNo) {
+      const head  = document.getElementById('hm-aisle-hourly-head');
+      const tbody = document.getElementById('hm-aisle-hourly-tbody');
+      if (!head || !tbody) return;
+
+      head.innerHTML = '';
+      tbody.innerHTML = `<tr><td><div class="loading-overlay"><span class="spinner"></span> Loading...</div></td></tr>`;
+
+      const d = await apiRaw('/cultfit/aisle-hourly', { camera_no: camNo });
+      const hours = (d && d.hours) || [];
+
+      if (!d || !d.rows || !d.rows.length) {
+        tbody.innerHTML = `<tr><td><div class="empty-state"><div class="empty-icon">🚶</div><p>No Aisle ROI data for the selected period</p></div></td></tr>`;
+        return;
+      }
+
+      // Same convention as Staff Presence: a single-day filter shows that
+      // day's raw hourly counts; a multi-day range collapses to one row of
+      // per-hour averages (rounded, mean over the days that reported that hour).
+      const multiDay = S.start !== S.end;
+
+      let displayRows;
+      if (multiDay) {
+        const sums = {}, cnts = {};
+        d.rows.forEach(r => {
+          hours.forEach(h => {
+            const v = r.by_hour[h];
+            if (typeof v === 'number') { sums[h] = (sums[h] || 0) + v; cnts[h] = (cnts[h] || 0) + 1; }
+          });
+        });
+        const avgByHour = {};
+        hours.forEach(h => { if (cnts[h]) avgByHour[h] = Math.round(sums[h] / cnts[h]); });
+        displayRows = [{
+          label: `Average · ${d.rows.length} day${d.rows.length === 1 ? '' : 's'}`,
+          by_hour: avgByHour,
+        }];
+      } else {
+        displayRows = d.rows.map(r => ({ label: fmtDateLabel(r.date), by_hour: r.by_hour }));
+      }
+
+      head.innerHTML = `<tr><th>${multiDay ? 'Period' : 'Date'}</th>${hours.map(h => `<th style="text-align:center">${h}</th>`).join('')}</tr>`;
+
+      let peak = 0;
+      displayRows.forEach(r => hours.forEach(h => {
+        const v = r.by_hour[h];
+        if (typeof v === 'number' && v > peak) peak = v;
+      }));
+
+      tbody.innerHTML = displayRows.map(r => {
+        const cells = hours.map(h => {
+          const v = r.by_hour[h];
+          if (typeof v !== 'number') return `<td style="text-align:center;color:var(--text-muted)">&mdash;</td>`;
+          const ratio = peak > 0 ? v / peak : 0;
+          const bg = `rgba(37,99,235,${(0.05 + ratio * 0.33).toFixed(3)})`;
+          return `<td style="text-align:center;font-weight:600;background:${bg}">${v}</td>`;
+        }).join('');
+        return `<tr><td style="font-weight:600;white-space:nowrap;color:var(--text)">${r.label}</td>${cells}</tr>`;
+      }).join('');
     }
 
     async function loadHeatmap() {

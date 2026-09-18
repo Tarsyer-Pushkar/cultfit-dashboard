@@ -1128,6 +1128,81 @@ def cf_heatmap():
         print(f"[DB] Heatmap query error: {exc}")
         return jsonify({'error': 'Database query failed', 'detail': str(exc)}), 503
 
+# ─── Aisle ROI — per-hour breakdown (10:00–21:00) ─────────────────────────────
+# Same dwell-weighted detection formula as `alt_view` above (non-staff bboxes
+# whose centroid falls inside roi_alt_config.json's polygon, divided by
+# SNAPSHOTS_PER_DETECTION), but grouped by the hour-of-day instead of collapsed
+# into one range total. Only meaningful for a store/camera that has an alt ROI
+# configured (currently Cultfit-HSR / camera 5).
+@app.route('/api/cultfit/aisle-hourly')
+@require_login
+def cf_aisle_hourly():
+    start_dt, end_dt, end_dt_inclusive, store = _parse_range()
+    camera_no = request.args.get('camera_no', type=int)
+
+    db = _get_db()
+    if db is None:
+        return jsonify({'hours': [], 'rows': [], 'db_connected': False})
+
+    if not store or camera_no is None:
+        return jsonify({'hours': [], 'rows': [], 'db_connected': True})
+
+    alt_poly = _get_roi_alt_polygon(store, camera_no)
+    if alt_poly is None:
+        return jsonify({'hours': [], 'rows': [], 'db_connected': True})
+
+    try:
+        collection = db['heatmap']
+        match_filter = {
+            'project_name': PROJECT_NAME,
+            'store_code':   store,
+            'camera_no':    camera_no,
+            'date_time': {
+                '$gte': start_dt.strftime('%Y-%m-%d %H:%M:%S'),
+                '$lt':  end_dt_inclusive.strftime('%Y-%m-%d %H:%M:%S'),
+            }
+        }
+        docs = collection.find(match_filter, {'_id': 0, 'date_time': 1, 'person_bbox_list': 1}).limit(20000)
+
+        SNAPSHOTS_PER_DETECTION = 15
+        HOURS = [f"{h:02d}:00" for h in range(10, 21)]  # 10:00 .. 20:00 (slots ending 21:00)
+
+        grid = {}  # date -> {hour_label: raw_weighted_count}
+        for doc in docs:
+            dt_str = doc.get('date_time', '')
+            if len(dt_str) < 13 or not dt_str[11:13].isdigit():
+                continue
+            hour_label = f"{dt_str[11:13]}:00"
+            if hour_label not in HOURS:
+                continue
+            date_only = dt_str[:10]
+
+            bboxes = doc.get('person_bbox_list', {}) or {}
+            for gender in ('male', 'female', 'child'):
+                boxes = bboxes.get(gender)
+                if not isinstance(boxes, list):
+                    continue
+                for box in boxes:
+                    if not (isinstance(box, (list, tuple)) and len(box) == 4):
+                        continue
+                    cx = (box[0] + box[2]) / 2.0
+                    cy = (box[1] + box[3]) / 2.0
+                    if _point_in_polygon(cx, cy, alt_poly):
+                        day_bucket = grid.setdefault(date_only, {})
+                        day_bucket[hour_label] = day_bucket.get(hour_label, 0) + 1
+
+        rows = []
+        for date_only, raw_by_hour in grid.items():
+            by_hour = {h: round(v / SNAPSHOTS_PER_DETECTION) for h, v in raw_by_hour.items()}
+            rows.append({'date': date_only, 'by_hour': by_hour, 'total': sum(by_hour.values())})
+        rows.sort(key=lambda r: r['date'], reverse=True)
+
+        return jsonify({'hours': HOURS, 'rows': rows, 'db_connected': True})
+
+    except Exception as exc:
+        print(f"[DB] Aisle hourly query error: {exc}")
+        return jsonify({'error': 'Database query failed', 'detail': str(exc)}), 503
+
 # ─── Shopper Flow (reid collection — zone-based 2D floor-plan map) ────────────
 # reid docs carry a `store_location` field (e.g. "Zone_5") identifying which
 # physical zone that detection belongs to — this is store-wide zone
