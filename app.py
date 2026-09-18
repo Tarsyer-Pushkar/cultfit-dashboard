@@ -1128,7 +1128,7 @@ def cf_heatmap():
         print(f"[DB] Heatmap query error: {exc}")
         return jsonify({'error': 'Database query failed', 'detail': str(exc)}), 503
 
-# ─── Aisle ROI — per-hour breakdown (10:00–21:00) ─────────────────────────────
+# ─── Aisle ROI — per-hour breakdown (10:00–22:00) ─────────────────────────────
 # Same dwell-weighted detection formula as `alt_view` above (non-staff bboxes
 # whose centroid falls inside roi_alt_config.json's polygon, divided by
 # SNAPSHOTS_PER_DETECTION), but grouped by the hour-of-day instead of collapsed
@@ -1165,7 +1165,7 @@ def cf_aisle_hourly():
         docs = collection.find(match_filter, {'_id': 0, 'date_time': 1, 'person_bbox_list': 1}).limit(20000)
 
         SNAPSHOTS_PER_DETECTION = 15
-        HOURS = [f"{h:02d}:00" for h in range(10, 21)]  # 10:00 .. 20:00 (slots ending 21:00)
+        HOURS = [f"{h:02d}:00" for h in range(10, 22)]  # 10:00 .. 21:00 (slots ending 22:00)
 
         grid = {}  # date -> {hour_label: raw_weighted_count}
         for doc in docs:
