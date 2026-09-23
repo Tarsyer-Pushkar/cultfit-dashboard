@@ -2,7 +2,7 @@ from flask import Flask, jsonify, request, session, send_from_directory, Respons
 from flask_cors import CORS
 from datetime import datetime, timedelta
 from functools import wraps
-import os, csv, io, time, json, collections, re
+import os, csv, io, time, json, collections, re, math
 import bcrypt
 from bson import ObjectId
 from dotenv import load_dotenv
@@ -1570,11 +1570,13 @@ def cf_gate_activity():
         return jsonify({'error': 'Database query failed', 'detail': str(exc)}), 503
 
 # ─── Staff Presence (footfall collection — camera_no 3) ──────────────────────
-# camera_no 3 points at the staff area; it logs one hourly snapshot whose
-# `count_male` is the number of staff seen that hour (the other count_* /
-# opp_count_* fields are unused on this camera). Presented as a date x hour
-# grid: one row per store/day, one column per hour that appears anywhere in
-# the range, cell = staff count for that hour.
+# camera_no 3 points at the staff area; it logs 30-minute snapshots whose
+# `count_male` is the number of staff seen in that half hour (the other
+# count_* / opp_count_* fields are unused on this camera). Presented as two
+# date x time grids: one row per store/day, one column per half-hour (or
+# hour) that appears anywhere in the range. The hourly grid is derived from
+# the half-hour grid by averaging the :00 and :30 buckets and flooring the
+# result, not by summing raw documents.
 @app.route('/api/cultfit/staff-presence')
 @require_login
 def cf_staff_presence():
@@ -1582,7 +1584,7 @@ def cf_staff_presence():
 
     db = _get_db()
     if db is None:
-        return jsonify({'hours': [], 'rows': [], 'db_connected': False})
+        return jsonify({'half_hours': [], 'hours': [], 'rows': [], 'db_connected': False})
 
     try:
         collection = db['footfall']
@@ -1601,41 +1603,55 @@ def cf_staff_presence():
             {'$match': match_filter},
             {'$group': {
                 '_id': {
-                    'date': {'$substr': ['$date_time', 0, 10]},
-                    'hour': {'$substr': ['$date_time', 11, 2]},
-                    'store': '$store_code',
+                    'date':   {'$substr': ['$date_time', 0, 10]},
+                    'hour':   {'$substr': ['$date_time', 11, 2]},
+                    'minute': {'$substr': ['$date_time', 14, 2]},
+                    'store':  '$store_code',
                 },
                 'staff': {'$sum': {'$ifNull': ['$count_male', 0]}},
             }},
         ]
 
-        grid = {}                 # (store, date) -> {hour_label: staff}
-        hours_seen = set()
+        half_grid = {}             # (store, date) -> {half_hour_label: staff}
+        half_hours_seen = set()
         for r in collection.aggregate(pipeline):
             # Only surface business hours: 10 AM to 9 PM.
             try:
                 hour_int = int(r['_id']['hour'])
+                minute_int = int(r['_id']['minute'])
             except (TypeError, ValueError):
                 continue
             if hour_int < 10 or hour_int > 21:
                 continue
+            bucket = '00' if minute_int < 30 else '30'
+            half_hour_label = f"{r['_id']['hour']}:{bucket}"
             key = (r['_id']['store'], r['_id']['date'])
-            hour_label = f"{r['_id']['hour']}:00"
-            hours_seen.add(hour_label)
-            grid.setdefault(key, {})[hour_label] = r['staff']
+            half_hours_seen.add(half_hour_label)
+            slot = half_grid.setdefault(key, {})
+            slot[half_hour_label] = slot.get(half_hour_label, 0) + r['staff']
 
-        hours = sorted(hours_seen)
+        half_hours = sorted(half_hours_seen)
+        hours = sorted({label.split(':')[0] + ':00' for label in half_hours})
+
         rows = []
-        for (store_code, date_only), by_hour in grid.items():
+        for (store_code, date_only), by_half_hour in half_grid.items():
+            by_hour = {}
+            for hour_label in hours:
+                hour_prefix = hour_label.split(':')[0]
+                values = [by_half_hour[l] for l in (f'{hour_prefix}:00', f'{hour_prefix}:30')
+                          if l in by_half_hour]
+                if values:
+                    by_hour[hour_label] = math.floor(sum(values) / len(values))
             rows.append({
-                'date':    date_only,
-                'store':   store_code,
-                'by_hour': by_hour,
-                'total':   sum(by_hour.values()),
+                'date':         date_only,
+                'store':        store_code,
+                'by_half_hour': by_half_hour,
+                'by_hour':      by_hour,
+                'total':        sum(by_half_hour.values()),
             })
         rows.sort(key=lambda r: (r['date'], r['store']), reverse=True)
 
-        return jsonify({'hours': hours, 'rows': rows, 'db_connected': True})
+        return jsonify({'half_hours': half_hours, 'hours': hours, 'rows': rows, 'db_connected': True})
 
     except Exception as exc:
         print(f"[DB] Staff presence query error: {exc}")

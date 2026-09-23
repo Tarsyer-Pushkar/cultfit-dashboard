@@ -531,8 +531,21 @@
 
             <div class="chart-card full" style="padding:0;overflow:hidden;margin-top:18px">
               <div style="padding:16px 18px 0">
-                <div class="chart-title">Staff Presence</div>
+                <div class="chart-title">Staff Presence &middot; 30 Minutes</div>
                 <div class="chart-subtitle">Across the store with staff count (black, navy blue &amp; Turquoise uniforms)</div>
+              </div>
+              <div style="overflow-x:auto;margin-top:14px">
+                <table class="gate-table" id="staff-presence-half-hour-table">
+                  <thead id="staff-presence-half-hour-head"></thead>
+                  <tbody id="staff-presence-half-hour-tbody"></tbody>
+                </table>
+              </div>
+            </div>
+
+            <div class="chart-card full" style="padding:0;overflow:hidden;margin-top:18px">
+              <div style="padding:16px 18px 0">
+                <div class="chart-title">Staff Presence &middot; Hourly</div>
+                <div class="chart-subtitle">Each hour is the floor of the average of its two 30-minute buckets</div>
               </div>
               <div style="overflow-x:auto;margin-top:14px">
                 <table class="gate-table" id="staff-presence-table">
@@ -1226,60 +1239,55 @@
       hmRenderArea();
     }
 
-    async function loadStaffPresence() {
-      const head  = document.getElementById('staff-presence-head');
-      const tbody = document.getElementById('staff-presence-tbody');
-      if (!head || !tbody) return;
-
-      head.innerHTML = '';
-      tbody.innerHTML = `<tr><td><div class="loading-overlay"><span class="spinner"></span> Loading...</div></td></tr>`;
-
-      const d = await apiRaw('/cultfit/staff-presence');
-      const hours = (d && d.hours) || [];
-
-      if (!d || !d.rows || !d.rows.length) {
+    // Renders one staff-presence table (either the 30-minute or the hourly
+    // grid) into the given head/tbody elements. `cols` is the sorted list of
+    // column labels and `field` is which per-row bucket map to read
+    // ('by_half_hour' or 'by_hour').
+    function renderStaffPresenceTable(head, tbody, rows, cols, field) {
+      if (!rows.length) {
         tbody.innerHTML = `<tr><td><div class="empty-state"><div class="empty-icon">🧑‍💼</div><p>No staff presence data for the selected period</p></div></td></tr>`;
+        head.innerHTML = '';
         return;
       }
 
-      // A single day shows that day's hourly counts; a multi-day range collapses
-      // to one row of per-hour averages (mean over the days that reported that
-      // hour), so the table stays readable as the range widens.
+      // A single day shows that day's raw counts; a multi-day range collapses
+      // to one row of per-column averages (mean over the days that reported
+      // that column), so the table stays readable as the range widens.
       const multiDay = S.start !== S.end;
-      // Multi-day cells are per-hour averages rounded to whole numbers (no
-      // decimals); single-day cells are the raw hourly counts.
+      // Multi-day cells are averages rounded to whole numbers (no decimals);
+      // single-day cells are the raw counts.
       const fmtNum = n => multiDay ? String(Math.round(n)) : String(n);
 
       let displayRows;
       if (multiDay) {
         const sums = {}, cnts = {};
-        d.rows.forEach(r => {
-          hours.forEach(h => {
-            const v = r.by_hour[h];
-            if (typeof v === 'number') { sums[h] = (sums[h] || 0) + v; cnts[h] = (cnts[h] || 0) + 1; }
+        rows.forEach(r => {
+          cols.forEach(c => {
+            const v = r[field][c];
+            if (typeof v === 'number') { sums[c] = (sums[c] || 0) + v; cnts[c] = (cnts[c] || 0) + 1; }
           });
         });
-        const avgByHour = {};
-        hours.forEach(h => { if (cnts[h]) avgByHour[h] = sums[h] / cnts[h]; });
+        const avgByCol = {};
+        cols.forEach(c => { if (cnts[c]) avgByCol[c] = sums[c] / cnts[c]; });
         displayRows = [{
-          label: `Average · ${d.rows.length} day${d.rows.length === 1 ? '' : 's'}`,
-          by_hour: avgByHour,
+          label: `Average · ${rows.length} day${rows.length === 1 ? '' : 's'}`,
+          bucket: avgByCol,
         }];
       } else {
-        displayRows = d.rows.map(r => ({ label: fmtDateLabel(r.date), by_hour: r.by_hour }));
+        displayRows = rows.map(r => ({ label: fmtDateLabel(r.date), bucket: r[field] }));
       }
 
-      head.innerHTML = `<tr><th>${multiDay ? 'Period' : 'Date'}</th>${hours.map(h => `<th style="text-align:center">${h}</th>`).join('')}</tr>`;
+      head.innerHTML = `<tr><th>${multiDay ? 'Period' : 'Date'}</th>${cols.map(c => `<th style="text-align:center">${c}</th>`).join('')}</tr>`;
 
       let peak = 0;
-      displayRows.forEach(r => hours.forEach(h => {
-        const v = r.by_hour[h];
+      displayRows.forEach(r => cols.forEach(c => {
+        const v = r.bucket[c];
         if (typeof v === 'number' && v > peak) peak = v;
       }));
 
       tbody.innerHTML = displayRows.map(r => {
-        const cells = hours.map(h => {
-          const v = r.by_hour[h];
+        const cells = cols.map(c => {
+          const v = r.bucket[c];
           if (typeof v !== 'number') return `<td style="text-align:center;color:var(--text-muted)">&mdash;</td>`;
           const ratio = peak > 0 ? v / peak : 0;
           const bg = `rgba(37,99,235,${(0.05 + ratio * 0.33).toFixed(3)})`;
@@ -1287,6 +1295,27 @@
         }).join('');
         return `<tr><td style="font-weight:600;white-space:nowrap;color:var(--text)">${r.label}</td>${cells}</tr>`;
       }).join('');
+    }
+
+    async function loadStaffPresence() {
+      const halfHead  = document.getElementById('staff-presence-half-hour-head');
+      const halfTbody = document.getElementById('staff-presence-half-hour-tbody');
+      const hourHead  = document.getElementById('staff-presence-head');
+      const hourTbody = document.getElementById('staff-presence-tbody');
+      if (!halfHead || !halfTbody || !hourHead || !hourTbody) return;
+
+      [halfHead, hourHead].forEach(h => h.innerHTML = '');
+      const loadingHtml = `<tr><td><div class="loading-overlay"><span class="spinner"></span> Loading...</div></td></tr>`;
+      halfTbody.innerHTML = loadingHtml;
+      hourTbody.innerHTML = loadingHtml;
+
+      const d = await apiRaw('/cultfit/staff-presence');
+      const halfHours = (d && d.half_hours) || [];
+      const hours = (d && d.hours) || [];
+      const rows = (d && d.rows) || [];
+
+      renderStaffPresenceTable(halfHead, halfTbody, rows, halfHours, 'by_half_hour');
+      renderStaffPresenceTable(hourHead, hourTbody, rows, hours, 'by_hour');
     }
 
     // ─────────────────────────────────────────────────────────────────────────
