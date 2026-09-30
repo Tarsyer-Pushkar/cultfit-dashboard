@@ -924,7 +924,7 @@ HEATMAP_SUBSTREAM_STORES = {'Cultfit-HSR'}
 
 # Aisle ROI (heatmap sub-tab) dwell-weighting divisor: see _footfall_cam4_by_hour
 # below for the camera_no 4 priority rule this now falls back from.
-AISLE_SNAPSHOTS_PER_DETECTION = 12
+AISLE_SNAPSHOTS_PER_DETECTION = 13
 
 # footfall collection, camera_no 4: one document per hour, whose count_male is
 # an authoritative per-hour aisle detection count. When present for a given
