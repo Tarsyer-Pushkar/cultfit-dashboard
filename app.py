@@ -922,6 +922,43 @@ def _point_in_polygon(x, y, poly):
 # at, there's nothing else to keep in sync.
 HEATMAP_SUBSTREAM_STORES = {'Cultfit-HSR'}
 
+# Aisle ROI (heatmap sub-tab) dwell-weighting divisor: see _footfall_cam4_by_hour
+# below for the camera_no 4 priority rule this now falls back from.
+AISLE_SNAPSHOTS_PER_DETECTION = 12
+
+# footfall collection, camera_no 4: one document per hour, whose count_male is
+# an authoritative per-hour aisle detection count. When present for a given
+# (store, date, hour), it takes priority over the heatmap-ROI-derived estimate
+# below — the heatmap fallback is only used for hours with no camera_no 4 doc.
+def _footfall_cam4_by_hour(db, store, start_dt, end_dt_inclusive):
+    """(date_str, 'HH:00') -> summed count_male for footfall camera_no 4 docs
+    in range. One record per hour is expected; summing is safe if more than
+    one exists for the same hour."""
+    match_filter = {
+        'project_name': PROJECT_NAME,
+        'camera_no': 4,
+        'date_time': {
+            '$gte': start_dt.strftime('%Y-%m-%d %H:%M:%S'),
+            '$lt':  end_dt_inclusive.strftime('%Y-%m-%d %H:%M:%S'),
+        }
+    }
+    if store:
+        match_filter['store_code'] = store
+    pipeline = [
+        {'$match': match_filter},
+        {'$group': {
+            '_id': {
+                'date': {'$substr': ['$date_time', 0, 10]},
+                'hour': {'$substr': ['$date_time', 11, 2]},
+            },
+            'value': {'$sum': {'$ifNull': ['$count_male', 0]}},
+        }},
+    ]
+    result = {}
+    for r in db['footfall'].aggregate(pipeline):
+        result[(r['_id']['date'], f"{r['_id']['hour']}:00")] = r['value']
+    return result
+
 def _latest_nvr_image(db, camera_no, store):
     stream_type = 'sub' if store in HEATMAP_SUBSTREAM_STORES else 'main'
     match_filter = {
@@ -965,6 +1002,7 @@ def cf_heatmap():
 
         cameras_result = []
         totals = {'docs': 0, 'total': 0, 'male': 0, 'female': 0, 'child': 0, 'staff': 0}
+        cam4_by_hour = _footfall_cam4_by_hour(db, store, start_dt, end_dt_inclusive)
 
         for camera_no in camera_nos:
             match_filter = dict(base_filter, camera_no=camera_no)
@@ -972,7 +1010,7 @@ def cf_heatmap():
 
             docs = list(collection.find(
                 match_filter,
-                {'_id': 0, 'camera_no': 1, 'person_bbox_list': 1, 'count': 1}
+                {'_id': 0, 'camera_no': 1, 'person_bbox_list': 1, 'count': 1, 'date_time': 1}
             ).limit(5000))
             if not docs:
                 continue
@@ -1047,19 +1085,26 @@ def cf_heatmap():
             # ── Alternate ROI representation (heatmap sub-tab) ──────────────
             # Independent second pass over the same snapshot docs, scoped to a
             # separate polygon from roi_alt_config.json. Staff are excluded
-            # from both the drawn blobs and the detection count. The raw count
-            # is dwell-weighted (every non-staff box in every snapshot whose
-            # centroid lands inside the polygon adds 1); it is then divided by
-            # SNAPSHOTS_PER_DETECTION so the displayed number reads as
-            # "person-presence units" — 15 snapshots' worth of a person in the
-            # aisle == 1.
-            SNAPSHOTS_PER_DETECTION = 15
+            # from both the drawn blobs and the detection count. The overlay
+            # points always come from these heatmap boxes. The headline
+            # detection_count, however, is hybrid per hour: footfall
+            # camera_no 4's count_male wins for any (date, hour) it covers
+            # (see _footfall_cam4_by_hour); only hours with no camera_no 4 doc
+            # fall back to the heatmap-derived estimate — every non-staff box
+            # in every snapshot whose centroid lands inside the polygon adds
+            # 1 to that hour's raw count, divided by
+            # AISLE_SNAPSHOTS_PER_DETECTION so it reads as "person-presence
+            # units" (12 snapshots' worth of a person in the aisle == 1).
             alt_poly = _get_roi_alt_polygon(store, camera_no)
             alt_view = None
             if alt_poly is not None:
                 alt_points = []
-                alt_count = 0
+                raw_by_hour = {}  # (date_str, 'HH:00') -> raw box count
                 for doc in docs:
+                    dt_str = doc.get('date_time', '')
+                    hour_key = None
+                    if len(dt_str) >= 13 and dt_str[11:13].isdigit():
+                        hour_key = (dt_str[:10], f"{dt_str[11:13]}:00")
                     bboxes = doc.get('person_bbox_list', {}) or {}
                     for gender in ('male', 'female', 'child'):
                         boxes = bboxes.get(gender)
@@ -1073,7 +1118,8 @@ def cf_heatmap():
                             cy = (box[1] + box[3]) / 2.0
                             if not _point_in_polygon(cx, cy, alt_poly):
                                 continue
-                            alt_count += 1
+                            if hour_key is not None:
+                                raw_by_hour[hour_key] = raw_by_hour.get(hour_key, 0) + 1
                             if kept < 40:
                                 alt_points.append({
                                     'x1': box[0], 'y1': box[1],
@@ -1084,11 +1130,19 @@ def cf_heatmap():
                 if len(alt_points) > 4000:
                     import random
                     alt_points = random.sample(alt_points, 4000)
+
+                detection_count = 0
+                for hour_key in set(raw_by_hour) | set(cam4_by_hour):
+                    if hour_key in cam4_by_hour:
+                        detection_count += cam4_by_hour[hour_key]
+                    else:
+                        detection_count += round(raw_by_hour[hour_key] / AISLE_SNAPSHOTS_PER_DETECTION)
+
                 alt_view = {
                     'label':           'Aisle ROI',
                     'roi':             [{'x': x, 'y': y} for (x, y) in alt_poly],
                     'points':          alt_points,
-                    'detection_count': round(alt_count / SNAPSHOTS_PER_DETECTION),
+                    'detection_count': detection_count,
                 }
 
             cameras_result.append({
@@ -1129,9 +1183,11 @@ def cf_heatmap():
         return jsonify({'error': 'Database query failed', 'detail': str(exc)}), 503
 
 # ─── Aisle ROI — per-hour breakdown (10:00–22:00) ─────────────────────────────
-# Same dwell-weighted detection formula as `alt_view` above (non-staff bboxes
-# whose centroid falls inside roi_alt_config.json's polygon, divided by
-# SNAPSHOTS_PER_DETECTION), but grouped by the hour-of-day instead of collapsed
+# Same hybrid priority as `alt_view` above: footfall camera_no 4's count_male
+# wins for any (date, hour) it covers; only hours with no camera_no 4 doc fall
+# back to the heatmap-ROI dwell-weighted estimate (non-staff bboxes whose
+# centroid falls inside roi_alt_config.json's polygon, divided by
+# AISLE_SNAPSHOTS_PER_DETECTION). Grouped by hour-of-day instead of collapsed
 # into one range total. Only meaningful for a store/camera that has an alt ROI
 # configured (currently Cultfit-HSR / camera 5).
 @app.route('/api/cultfit/aisle-hourly')
@@ -1164,7 +1220,6 @@ def cf_aisle_hourly():
         }
         docs = collection.find(match_filter, {'_id': 0, 'date_time': 1, 'person_bbox_list': 1}).limit(20000)
 
-        SNAPSHOTS_PER_DETECTION = 15
         HOURS = [f"{h:02d}:00" for h in range(10, 22)]  # 10:00 .. 21:00 (slots ending 22:00)
 
         grid = {}  # date -> {hour_label: raw_weighted_count}
@@ -1191,9 +1246,24 @@ def cf_aisle_hourly():
                         day_bucket = grid.setdefault(date_only, {})
                         day_bucket[hour_label] = day_bucket.get(hour_label, 0) + 1
 
+        cam4_by_hour = _footfall_cam4_by_hour(db, store, start_dt, end_dt_inclusive)
+        # Restrict camera_no 4 data to hours actually shown in this table and
+        # fold it into the same date -> {hour_label: ...} shape as `grid`.
+        cam4_grid = {}
+        for (date_only, hour_label), value in cam4_by_hour.items():
+            if hour_label in HOURS:
+                cam4_grid.setdefault(date_only, {})[hour_label] = value
+
         rows = []
-        for date_only, raw_by_hour in grid.items():
-            by_hour = {h: round(v / SNAPSHOTS_PER_DETECTION) for h, v in raw_by_hour.items()}
+        for date_only in (set(grid) | set(cam4_grid)):
+            raw_by_hour = grid.get(date_only, {})
+            cam4_for_date = cam4_grid.get(date_only, {})
+            by_hour = {}
+            for hour_label in set(raw_by_hour) | set(cam4_for_date):
+                if hour_label in cam4_for_date:
+                    by_hour[hour_label] = cam4_for_date[hour_label]
+                else:
+                    by_hour[hour_label] = round(raw_by_hour[hour_label] / AISLE_SNAPSHOTS_PER_DETECTION)
             rows.append({'date': date_only, 'by_hour': by_hour, 'total': sum(by_hour.values())})
         rows.sort(key=lambda r: r['date'], reverse=True)
 
