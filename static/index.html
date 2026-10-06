@@ -146,6 +146,19 @@
     .topbar-user-chip { display: flex; align-items: center; gap: 8px; background: #f8fafc; border: 1px solid var(--border); border-radius: 30px; padding: 5px 14px 5px 8px; }
     .topbar-user-avatar { width: 26px; height: 26px; border-radius: 50%; background: linear-gradient(135deg, #b91c1c, #dc2626); display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 700; color: #fff; flex-shrink: 0; }
     .topbar-user { font-size: 12px; color: var(--text); font-weight: 600; letter-spacing: -.1px; }
+    .user-menu-wrap { position: relative; }
+    .topbar-user-chip { cursor: pointer; font-family: inherit; background: #fef2f2; border-color: #fecaca; transition: background .18s, box-shadow .18s; }
+    .topbar-user-chip:hover, .topbar-user-chip.open { background: #fee2e2; box-shadow: 0 2px 8px rgba(185,28,28,.18); }
+    .topbar-user-caret { font-size: 9px; color: var(--primary); }
+    .user-menu { display: none; position: absolute; top: calc(100% + 8px); right: 0; min-width: 170px; background: #fff; border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.14); padding: 6px; z-index: 9500; }
+    .user-menu.open { display: block; }
+    .user-menu-item { display: block; width: 100%; text-align: left; padding: 9px 12px; background: none; border: none; border-radius: 6px; font-size: 13px; font-weight: 600; color: var(--text); cursor: pointer; font-family: inherit; }
+    .user-menu-item:hover { background: #fef2f2; color: var(--primary); }
+    .pw-banner-btn { background: #78350f; color: #fff; border: none; border-radius: 6px; padding: 5px 12px; font-size: 12px; font-weight: 700; cursor: pointer; font-family: inherit; }
+    .pw-banner-btn:hover { background: #451a03; }
+    .pw-banner-close { background: none; border: none; color: #78350f; font-size: 18px; line-height: 1; cursor: pointer; padding: 0 2px; }
+    .cp-cancel { display: none; width: 100%; margin-top: 10px; padding: 11px; background: #fff; color: #64748b; border: 1px solid var(--border); border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit; }
+    .cp-cancel:hover { background: #f8fafc; }
     .logout-btn { display: flex; align-items: center; gap: 5px; padding: 6px 14px; background: #fff; color: #64748b; border: 1px solid var(--border); border-radius: 30px; font-size: 12px; font-weight: 600; transition: background .18s, color .18s, border-color .18s; letter-spacing: .1px; }
     .logout-btn:hover { background: #fef2f2; color: var(--primary); border-color: #fecaca; }
 
@@ -396,6 +409,7 @@
         </div>
 
         <button class="login-btn" id="cp-btn">Change Password →</button>
+        <button type="button" class="cp-cancel" id="cp-cancel">← Back to dashboard</button>
         <div class="login-error" id="cp-error"></div>
       </div>
     </div>
@@ -424,9 +438,15 @@
         <span class="topbar-title">Cultfit Analytics Dashboard</span>
       </div>
       <div class="topbar-right">
-        <div class="topbar-user-chip">
-          <div class="topbar-user-avatar" id="topbar-avatar">U</div>
-          <span class="topbar-user" id="topbar-user"></span>
+        <div class="user-menu-wrap" id="user-menu-wrap">
+          <button type="button" class="topbar-user-chip" id="user-menu-btn" aria-haspopup="true">
+            <div class="topbar-user-avatar" id="topbar-avatar">U</div>
+            <span class="topbar-user" id="topbar-user"></span>
+            <span class="topbar-user-caret">▼</span>
+          </button>
+          <div class="user-menu" id="user-menu">
+            <button type="button" class="user-menu-item" id="user-menu-change-pw">🔑 Change password</button>
+          </div>
         </div>
         <button class="logout-btn" id="logout-btn">⎋ Sign Out</button>
       </div>
@@ -794,14 +814,13 @@
       if (!els.length) return;
 
       const d = await apiRaw('/cultfit/store-hours');
-      if (!d || !d.available) {
+      // 'union' = widest hours across all stores: card intentionally not shown
+      if (!d || !d.available || d.source === 'union') {
         els.forEach(el => { el.style.display = 'none'; el.innerHTML = ''; });
         return;
       }
 
-      const label = d.source === 'union'
-        ? 'Widest hours across all stores'
-        : 'Store hours';
+      const label = 'Store hours';
       const html = `
         <div class="chart-card" style="margin-bottom:16px;display:flex;align-items:center;gap:12px">
           <span style="font-size:22px">🕒</span>
@@ -1566,7 +1585,13 @@
       document.getElementById('change-password-screen').classList.add('hidden');
       document.getElementById('app').classList.add('visible');
     }
-    function openChangePassword() {
+    // voluntary = user opened it themselves (can go back); otherwise change is mandatory
+    function openChangePassword(voluntary = false) {
+      document.getElementById('cp-cancel').style.display = voluntary === true ? 'block' : 'none';
+      const b = document.getElementById('pw-expiry-banner');
+      if (b) b.style.display = 'none';
+      document.getElementById('user-menu').classList.remove('open');
+      document.getElementById('user-menu-btn').classList.remove('open');
       document.getElementById('login-screen').classList.add('hidden');
       document.getElementById('change-password-screen').classList.remove('hidden');
       document.getElementById('app').classList.remove('visible');
@@ -1597,11 +1622,33 @@
         banner.className = 'pw-expiry-banner';
         document.body.appendChild(banner);
       }
-      banner.innerHTML = `⚠️ Your password expires in ${days} day${days !== 1 ? 's' : ''}. Please change it soon.`;
+      banner.innerHTML = `<span>⚠️ Your password expires in ${days} day${days !== 1 ? 's' : ''}. Please change it soon.</span>
+        <button type="button" class="pw-banner-btn" id="pw-banner-change">Change Password</button>
+        <button type="button" class="pw-banner-close" id="pw-banner-close" aria-label="Dismiss">×</button>`;
+      document.getElementById('pw-banner-change').onclick = () => openChangePassword(true);
+      document.getElementById('pw-banner-close').onclick = () => { banner.style.display = 'none'; };
       banner.style.display = 'flex';
       clearTimeout(banner._t);
-      banner._t = setTimeout(() => { banner.style.display = 'none'; }, 10000);
+      banner._t = setTimeout(() => { banner.style.display = 'none'; }, 20000);
     }
+
+    // ── User menu (top-right) ──
+    document.getElementById('user-menu-btn').addEventListener('click', e => {
+      e.stopPropagation();
+      document.getElementById('user-menu').classList.toggle('open');
+      e.currentTarget.classList.toggle('open');
+    });
+    document.getElementById('user-menu-change-pw').addEventListener('click', () => openChangePassword(true));
+    document.addEventListener('click', e => {
+      if (!document.getElementById('user-menu-wrap').contains(e.target)) {
+        document.getElementById('user-menu').classList.remove('open');
+        document.getElementById('user-menu-btn').classList.remove('open');
+      }
+    });
+    document.getElementById('cp-cancel').addEventListener('click', () => {
+      hideChangePassword();
+      document.getElementById('app').classList.add('visible');
+    });
 
     let _allStores = [];
 
